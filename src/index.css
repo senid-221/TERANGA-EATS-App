@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #2D2D2D;
+    background-color: #FDFBF7;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Outfit', sans-serif;
+  }
+}
+
+/* Artistic Flair custom 3D & tactile button styles */
+.btn-3d-primary {
+  background: linear-gradient(180deg, #007A3D 0%, #006633 100%);
+  box-shadow: 0 4px 0 #004D26, 0 8px 20px rgba(0, 102, 51, 0.22);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-3d-primary:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #004D26, 0 4px 10px rgba(0, 102, 51, 0.25);
+}
+
+.btn-3d-gold {
+  background: linear-gradient(180deg, #FFD633 0%, #FFCC00 100%);
+  box-shadow: 0 4px 0 #D4A800, 0 8px 20px rgba(255, 204, 0, 0.28);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-3d-gold:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #D4A800, 0 4px 10px rgba(255, 204, 0, 0.3);
+}
+
+.btn-3d-orange {
+  background: linear-gradient(180deg, #F0803C 0%, #E8702A 100%);
+  box-shadow: 0 4px 0 #C4571A, 0 8px 20px rgba(232, 112, 42, 0.25);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-3d-orange:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #C4571A, 0 4px 10px rgba(232, 112, 42, 0.3);
+}
+
+.btn-3d-white {
+  background: #FFFFFF;
+  box-shadow: 0 4px 0 #F0EDE8, 0 8px 16px rgba(0, 0, 0, 0.04);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-3d-white:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #F0EDE8, 0 3px 6px rgba(0, 0, 0, 0.04);
+}
+
+/* Artistic flair soft shadows */
+.shadow-artistic {
+  box-shadow: 0px 10px 30px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-artistic-lg {
+  box-shadow: 0px 14px 40px rgba(0, 0, 0, 0.07);
+}
+
+/* Hide scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom pulse radar for tracking */
+@keyframes radar-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 102, 51, 0.7);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 15px rgba(0, 102, 51, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 102, 51, 0);
+  }
+}
+
+.radar-active {
+  animation: radar-pulse 2s infinite;
+}
+

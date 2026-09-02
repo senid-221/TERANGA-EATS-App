@@ -1,0 +1,6 @@
+{
+  "name": "Teranga Eats Dakar",
+  "description": "Application bilingue de livraison de repas, boissons locales et café à Dakar, Sénégal avec paiements Wave, Orange Money et suivi en temps réel.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
