@@ -19,10 +19,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   const {
     t,
     language,
-    cart,
+    cartItems,
     cartSubtotal,
-    deliveryFee,
-    discountAmount,
+    cartDeliveryFee,
+    cartDiscount,
     cartTotal,
     deliveryAddress,
     createOrder,
@@ -45,21 +45,18 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
 
     if (paymentMethod === 'wave') {
       setProcessingStep('Initialisation du paiement sécurisé Wave Sénégal...');
-      await new Promise((r) => setTimeout(r, 1000));
-      setProcessingStep('En attente de confirmation sur votre application Wave (1% sans frais)...');
-      await new Promise((r) => setTimeout(r, 1200));
-      setProcessingStep('Paiement Wave validé avec succès !');
+      await new Promise((r) => setTimeout(r, 600));
+      setProcessingStep('Validation du paiement Wave (1% sans frais)...');
+      await new Promise((r) => setTimeout(r, 600));
     } else if (paymentMethod === 'orange_money') {
       setProcessingStep('Génération de la demande de débit Orange Money (#144#)...');
-      await new Promise((r) => setTimeout(r, 1200));
-      setProcessingStep('Paiement Orange Money validé !');
-    } else if (paymentMethod === 'mtn') {
-      setProcessingStep('Connexion au serveur MTN / Free Money...');
-      await new Promise((r) => setTimeout(r, 1200));
-      setProcessingStep('Paiement validé !');
-    } else {
-      setProcessingStep('Validation de la commande avec paiement à la livraison...');
       await new Promise((r) => setTimeout(r, 800));
+    } else if (paymentMethod === 'mtn') {
+      setProcessingStep('Connexion au serveur Mobile Money...');
+      await new Promise((r) => setTimeout(r, 800));
+    } else {
+      setProcessingStep('Enregistrement de la commande avec paiement à la livraison...');
+      await new Promise((r) => setTimeout(r, 500));
     }
 
     const order = await createOrder(paymentMethod);
@@ -124,7 +121,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         </h4>
 
         <div className="space-y-2 text-xs">
-          {cart.map((item) => (
+          {cartItems.map((item) => (
             <div key={item.id} className="flex justify-between items-center text-gray-700">
               <span className="truncate max-w-[240px] font-medium text-[#2D2D2D]">
                 {item.quantity}x {language === 'fr' ? item.product.nameFR : item.product.nameEN}
@@ -141,12 +138,12 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
           </div>
           <div className="flex justify-between">
             <span>{t('deliveryFee')} ({deliveryAddress.neighborhood})</span>
-            <span className="font-bold text-[#2D2D2D]">{deliveryFee.toLocaleString()} FCFA</span>
+            <span className="font-bold text-[#2D2D2D]">{cartDeliveryFee.toLocaleString()} FCFA</span>
           </div>
-          {discountAmount > 0 && (
+          {cartDiscount > 0 && (
             <div className="flex justify-between text-[#006633] font-black">
               <span>{t('discount')}</span>
-              <span>-{discountAmount.toLocaleString()} FCFA</span>
+              <span>-{cartDiscount.toLocaleString()} FCFA</span>
             </div>
           )}
           <div className="pt-3 border-t border-[#F0EDE8] flex justify-between items-baseline">

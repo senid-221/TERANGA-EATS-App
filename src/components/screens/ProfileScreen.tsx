@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { LanguageSelector } from '../common/LanguageSelector';
 import { WhatsAppIcon } from '../common/WhatsAppIcon';
@@ -6,17 +6,22 @@ import {
   Calendar,
   ChevronRight,
   CreditCard,
+  Database,
   Globe,
   Headphones,
   HelpCircle,
+  KeyRound,
   LogOut,
   MapPin,
   Phone,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   User,
   Utensils,
 } from 'lucide-react';
+
+import { isSupabaseConfigured } from '../../lib/supabase';
 
 export const ProfileScreen: React.FC = () => {
   const {
@@ -30,11 +35,20 @@ export const ProfileScreen: React.FC = () => {
     setActiveScreen,
     openBookingModal,
     showToast,
+    isSupabaseConnected,
+        syncData,
   } = useApp();
+
+  
 
   const handleSupportWhatsApp = () => {
     const text = encodeURIComponent('Bonjour Teranga Eats Dakar, j’ai une question depuis mon profil client.');
     window.open(`https://wa.me/221775784158?text=${text}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleLogout = async () => {
+        logout();
+    showToast('Déconnexion réussie');
   };
 
   return (
@@ -57,12 +71,51 @@ export const ProfileScreen: React.FC = () => {
             </h2>
           </div>
           <p className="text-xs text-gray-500 font-medium truncate">{currentUser.phone}</p>
-          <div className="mt-2 flex items-center gap-2">
+          {currentUser.email && (
+            <p className="text-[11px] text-gray-400 font-medium truncate">{currentUser.email}</p>
+          )}
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full bg-emerald-50 text-[#006633] text-[11px] font-black border border-emerald-200 uppercase tracking-wider">
               {language === 'fr' ? 'Client Teranga Eats' : 'Teranga Eats Customer'}
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Cloud & OAuth Integration Status */}
+      <div className="bg-white rounded-[28px] p-4 sm:p-5 border border-[#F0EDE8] shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-[#006633]" />
+            <span className="text-xs font-black text-[#2D2D2D]">Connexions & Authentification</span>
+          </div>
+          <button
+            onClick={async () => {
+              await syncData();
+              showToast('Données synchronisées avec Supabase !');
+            }}
+            className="text-[11px] font-black text-[#006633] hover:underline flex items-center gap-1 cursor-pointer"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Synchroniser</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2.5">
+          <div className="bg-[#FAF8F5] p-3 rounded-2xl border border-[#F0EDE8] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={`w-2.5 h-2.5 rounded-full ${isSupabaseConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <div>
+                <p className="text-xs font-bold text-[#2D2D2D]">Supabase Database</p>
+                <p className="text-[10px] text-gray-500">{isSupabaseConnected ? 'Tables connectées' : 'Mode local'}</p>
+              </div>
+            </div>
+            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isSupabaseConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+              {isSupabaseConnected ? 'En ligne' : 'Prêt'}
+            </span>
+          </div>
+
+          
       </div>
 
       {/* WhatsApp Assistance Banner for Customer Support */}
@@ -116,7 +169,7 @@ export const ProfileScreen: React.FC = () => {
               <div className="flex items-center gap-2">
                 <p className="text-xs font-bold text-[#2D2D2D]">{t('myBookingsTitle')}</p>
                 <span className="text-[10px] font-black uppercase text-[#006633] bg-emerald-100 px-2 py-0.5 rounded-full">
-                  Nouveau
+                  Tables
                 </span>
               </div>
               <p className="text-[11px] text-gray-500 font-medium">
@@ -183,6 +236,7 @@ export const ProfileScreen: React.FC = () => {
             <div className="w-10 h-10 rounded-2xl bg-purple-50 text-purple-700 flex items-center justify-center">
               <ShieldCheck className="w-4 h-4" />
             </div>
+            </div>
             <div>
               <p className="text-xs font-bold text-[#2D2D2D]">Confidentialité & Sécurité</p>
               <p className="text-[11px] text-gray-500 font-medium">Données protégées au Sénégal</p>
@@ -194,7 +248,7 @@ export const ProfileScreen: React.FC = () => {
 
       {/* Logout button */}
       <button
-        onClick={logout}
+        onClick={handleLogout}
         className="w-full py-3.5 rounded-2xl bg-white border border-red-200 text-red-600 font-black text-xs hover:bg-red-50 cursor-pointer transition-all active:scale-98 shadow-artistic flex items-center justify-center gap-2"
       >
         <LogOut className="w-4 h-4" />

@@ -3,12 +3,14 @@ import { useApp } from '../../context/AppContext';
 import { CategoryCard } from '../common/CategoryCard';
 import { RestaurantCard } from '../common/RestaurantCard';
 import { ProductCard } from '../common/ProductCard';
+import { DakarRestaurantsMap } from '../maps/DakarRestaurantsMap';
 import {
   Calendar,
   ChevronRight,
   Coffee,
   CupSoda,
   Flame,
+  MapPin,
   Motorbike,
   RotateCcw,
   Search,
@@ -16,6 +18,7 @@ import {
   Ticket,
   Utensils,
   UtensilsCrossed,
+  Map as MapIcon,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Product, Restaurant } from '../../types';
@@ -47,6 +50,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   } = useApp();
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('senegalese');
+  const [showMap, setShowMap] = useState<boolean>(false);
 
   // Filtered products by selected category
   const categoryProducts = products.filter((p) => {
@@ -260,14 +264,52 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               {t('featuredRestaurants')}
             </h3>
           </div>
-          <button
-            onClick={() => setActiveTab('search')}
-            className="text-xs font-extrabold text-[#006633] hover:underline cursor-pointer flex items-center gap-0.5"
-          >
-            <span>{t('viewAll')}</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowMap(!showMap)}
+              className={`px-3 py-1 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 border ${
+                showMap
+                  ? 'bg-[#006633] text-white border-[#006633] shadow-xs'
+                  : 'bg-white text-[#006633] border-emerald-200 hover:bg-emerald-50'
+              }`}
+            >
+              <MapIcon className="w-3.5 h-3.5" />
+              <span>{showMap ? 'Masquer la carte' : 'Carte Dakar 🗺️'}</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('search')}
+              className="text-xs font-extrabold text-[#006633] hover:underline cursor-pointer flex items-center gap-0.5"
+            >
+              <span>{t('viewAll')}</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
+
+        {/* Expandable Google Map Component */}
+        {showMap && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-white rounded-[32px] p-4 border border-[#F0EDE8] shadow-artistic mb-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-[#006633]" />
+                  <span className="text-xs font-black text-[#2D2D2D]">Google Maps Dakar • Localisation des restos</span>
+                </div>
+                <span className="text-[11px] text-gray-500 font-bold">Plateau, Almadies, Ngor, Mermoz...</span>
+              </div>
+              <DakarRestaurantsMap
+                restaurants={restaurants}
+                onSelectRestaurant={(r) => onOpenRestaurantDetail(r)}
+                height="h-80 sm:h-96"
+              />
+            </div>
+          </motion.div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
           {restaurants.slice(0, 3).map((restaurant) => (

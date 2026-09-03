@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { LanguageSelector } from './LanguageSelector';
 import { Bell, ChevronDown, MapPin } from 'lucide-react';
-import { DAKAR_NEIGHBORHOODS } from '../../data/mockData';
+import { DAKAR_NEIGHBORHOODS } from '../../data/constants';
 import { motion, AnimatePresence } from 'motion/react';
 
 export const Header: React.FC = () => {

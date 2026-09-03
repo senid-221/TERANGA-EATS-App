@@ -1,14 +1,15 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   AppLanguage,
   AppNotification,
   CartItem,
+  Category,
+  Promotion,
   DakarNeighborhood,
   DeliveryAddress,
   Order,
   OrderStatus,
   PaymentMethod,
-  PaymentStatus,
   Product,
   Restaurant,
   TableBooking,
@@ -16,16 +17,22 @@ import {
   UserRole,
 } from '../types';
 import { translations } from '../locales/translations';
+import { DAKAR_NEIGHBORHOODS } from '../data/constants';
+const GUEST_USER: User = { id: "", fullName: "Guest", role: "customer", email: "", phone: "", language: "fr", createdAt: new Date().toISOString() };
 import {
-  CATEGORIES,
-  DAKAR_NEIGHBORHOODS,
-  DEFAULT_CUSTOMER_USER,
-  ASSIGNED_DRIVER,
-  INITIAL_BOOKINGS,
-  PRODUCTS,
-  PROMOTIONS,
-  RESTAURANTS,
-} from '../data/mockData';
+  dbFetchRestaurants,
+  dbFetchProducts,
+  dbFetchOrders,
+  dbFetchCategories,
+  dbFetchPromotions,
+  dbInsertOrder,
+  dbUpdateOrderStatus,
+  dbFetchBookings,
+  dbInsertBooking,
+  dbCancelBooking,
+  dbUpsertProfile,
+  isSupabaseConfigured,
+} from '../lib/supabase';
 
 interface AppContextType {
   // Localization
@@ -33,14 +40,23 @@ interface AppContextType {
   setLanguage: (lang: AppLanguage) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 
+  // Real Database & Auth Status
+  isSupabaseConnected: boolean;
+    syncData: () => Promise<void>;
+
   // Auth & Roles
   currentUser: User;
   setCurrentUser: (user: User) => void;
+  setUserFromClerk: (clerkUserData: {
+    id: string;
+    fullName?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    photoUrl?: string | null;
+  }) => void;
   role: UserRole;
   switchRole: (newRole: UserRole) => void;
   isAuthenticated: boolean;
-  login: (emailOrPhone: string, pass: string) => boolean;
-  register: (name: string, phone: string, email: string, pass: string) => boolean;
   logout: () => void;
 
   // Navigation flow
@@ -61,11 +77,11 @@ interface AppContextType {
   deliveryAddress: DeliveryAddress;
   setDeliveryAddress: (address: DeliveryAddress) => void;
 
-  // Data & State
+  // Data & State (Synced with Supabase)
   restaurants: Restaurant[];
   products: Product[];
-  categories: typeof CATEGORIES;
-  promotions: typeof PROMOTIONS;
+  categories: Category[];
+  promotions: Promotion[];
   toggleProductAvailability: (productId: string) => void;
   addNewProduct: (product: Omit<Product, 'id' | 'createdAt'>) => void;
 
@@ -83,11 +99,11 @@ interface AppContextType {
   applyPromoCode: (code: string) => boolean;
   cartCount: number;
 
-  // Orders
+  // Orders (Real Database)
   orders: Order[];
   activeOrder: Order | null;
-  createOrder: (paymentMethod: PaymentMethod) => Order;
-  updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  createOrder: (paymentMethod: PaymentMethod) => Promise<Order>;
+  updateOrderStatus: (orderId: string, status: OrderStatus, noteFR?: string, noteEN?: string) => Promise<void>;
   reorder: (order: Order) => void;
 
   // Favorites
@@ -98,7 +114,7 @@ interface AppContextType {
   isFavoriteRestaurant: (id: string) => boolean;
   isFavoriteProduct: (id: string) => boolean;
 
-  // Notifications & Real-Time Engine
+  // Notifications
   notifications: AppNotification[];
   unreadNotificationsCount: number;
   markNotificationAsRead: (id: string) => void;
@@ -108,29 +124,17 @@ interface AppContextType {
   addNotification: (notification: Omit<AppNotification, 'id' | 'createdAt' | 'read'>) => void;
   latestAlertNotification: AppNotification | null;
   dismissAlertNotification: () => void;
-  simulateNextOrderStep: (orderId?: string) => void;
-  triggerSimulatedScenario: (
-    scenario:
-      | 'order_accepted'
-      | 'driver_arrived'
-      | 'kitchen_prep'
-      | 'order_delivered'
-      | 'promo_dakar'
-      | 'table_booked'
-  ) => void;
-  isAutoSimulationActive: boolean;
-  toggleAutoSimulation: () => void;
 
   // Toast / Feedback
   toastMessage: string | null;
   showToast: (msg: string) => void;
 
-  // Table Bookings System
+  // Table Bookings System (Real Database)
   bookings: TableBooking[];
   createBooking: (
     data: Omit<TableBooking, 'id' | 'createdAt' | 'confirmationCode' | 'status'>
-  ) => TableBooking;
-  cancelBooking: (bookingId: string) => void;
+  ) => Promise<TableBooking>;
+  cancelBooking: (bookingId: string) => Promise<void>;
   isBookingModalOpen: boolean;
   bookingRestaurant: Restaurant | null;
   openBookingModal: (restaurant?: Restaurant) => void;
@@ -142,12 +146,13 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Locale
+    // Locale
   const [language, setLanguageState] = useState<AppLanguage>(() => {
     const saved = localStorage.getItem('teranga_lang');
     return (saved as AppLanguage) || 'fr';
-  });
+  
 
+  });
   const setLanguage = (lang: AppLanguage) => {
     setLanguageState(lang);
     localStorage.setItem('teranga_lang', lang);
@@ -167,10 +172,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Auth & Roles
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('teranga_user');
-    return saved ? JSON.parse(saved) : DEFAULT_CUSTOMER_USER;
+    return saved ? JSON.parse(saved) : GUEST_USER;
   });
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return Boolean(localStorage.getItem('teranga_auth_session'));
+  });
 
   const switchRole = (newRole: UserRole) => {
     const targetUser: User = {
@@ -179,6 +186,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setCurrentUser(targetUser);
     localStorage.setItem('teranga_user', JSON.stringify(targetUser));
+    dbUpsertProfile(targetUser);
+
     if (newRole === 'admin') {
       setActiveScreen('admin_dashboard');
     } else if (newRole === 'restaurant') {
@@ -191,57 +200,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const login = (emailOrPhone: string, _pass: string) => {
-    let user: User;
-    const saved = localStorage.getItem('teranga_user');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        user = {
-          ...parsed,
-          phone: emailOrPhone.includes('@') ? parsed.phone || '+221 77 543 21 00' : emailOrPhone,
-          email: emailOrPhone.includes('@') ? emailOrPhone : (parsed.email || ''),
-        };
-      } catch {
-        user = {
-          ...DEFAULT_CUSTOMER_USER,
-          phone: emailOrPhone.includes('@') ? '+221 77 543 21 00' : emailOrPhone,
-          email: emailOrPhone.includes('@') ? emailOrPhone : '',
-        };
-      }
-    } else {
-      user = {
-        ...DEFAULT_CUSTOMER_USER,
-        id: `user-${Date.now()}`,
-        phone: emailOrPhone.includes('@') ? '+221 77 543 21 00' : emailOrPhone,
-        email: emailOrPhone.includes('@') ? emailOrPhone : '',
-      };
-    }
-    setCurrentUser(user);
-    localStorage.setItem('teranga_user', JSON.stringify(user));
-    setIsAuthenticated(true);
-    return true;
-  };
+  const setUserFromClerk = useCallback((clerkUserData: {
+    id: string;
+    fullName?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    photoUrl?: string | null;
+  }) => {
+    // Check if the user is the admin
+    const isAdmin = 
+      clerkUserData.email === 'terangaeats221@gmail.com' || 
+      clerkUserData.id === 'user_3ImYJ1rEpbYsdNm1ZIQRdFKU68r';
 
-  const register = (name: string, phone: string, email: string, _pass: string) => {
-    const newUser: User = {
-      id: `user-${Date.now()}`,
-      fullName: name,
-      phone,
-      email,
-      role: 'customer',
+    const updatedUser: User = {
+      id: clerkUserData.id,
+      fullName: clerkUserData.fullName || (isAdmin ? 'Admin Teranga' : 'Client Teranga'),
+      email: clerkUserData.email || '',
+      phone: clerkUserData.phone || '+221 77 000 00 00',
+      photoUrl: clerkUserData.photoUrl || undefined,
+      role: isAdmin ? 'admin' : (currentUser.role || 'customer'),
       language,
       createdAt: new Date().toISOString(),
     };
-    setCurrentUser(newUser);
-    localStorage.setItem('teranga_user', JSON.stringify(newUser));
+    setCurrentUser(updatedUser);
+    
     setIsAuthenticated(true);
-    return true;
-  };
+    localStorage.setItem('teranga_user', JSON.stringify(updatedUser));
+    localStorage.setItem('teranga_auth_session', 'true');
+    dbUpsertProfile(updatedUser);
+  }, [currentUser.role, language]);
 
   const logout = () => {
-    setCurrentUser(DEFAULT_CUSTOMER_USER);
+    setCurrentUser(GUEST_USER);
     setIsAuthenticated(false);
+    localStorage.removeItem('teranga_auth_session');
     setActiveScreen('auth');
   };
 
@@ -265,11 +257,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     lng: DAKAR_NEIGHBORHOODS[0].lng,
   });
 
-  // State data
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(RESTAURANTS);
-  const [products, setProducts] = useState<Product[]>(PRODUCTS);
-  const categories = CATEGORIES;
-  const promotions = PROMOTIONS;
+  // State data (Synchronized with Supabase DB)
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+
+  // Real Database Orders & Bookings
+  const [orders, setOrders] = useState<Order[]>([]);
+    
+    
+  
+
+  const [bookings, setBookings] = useState<TableBooking[]>(() => {
+    const local = localStorage.getItem('teranga_bookings_db');
+    return [];
+  });
+  
+
+  // Synchronization with Supabase
+  const syncData = useCallback(async () => {
+    try {
+      const [fetchedRestaurants, fetchedProducts, fetchedOrders, fetchedBookings, fetchedCategories, fetchedPromotions] = await Promise.all([
+        dbFetchRestaurants(),
+        dbFetchProducts(),
+        dbFetchOrders(currentUser.id, currentUser.role),
+        dbFetchBookings(currentUser.id),
+        dbFetchCategories(),
+        dbFetchPromotions(),
+      ]);
+      setRestaurants(fetchedRestaurants);
+      setProducts(fetchedProducts);
+      setOrders(fetchedOrders);
+      setBookings(fetchedBookings);
+      setCategories(fetchedCategories);
+      setPromotions(fetchedPromotions);
+    } catch (e) {
+      console.error('Database synchronization error:', e);
+    }
+  }, [currentUser.id, currentUser.role]);
+
+  useEffect(() => {
+    syncData();
+  }, [syncData]);
 
   const toggleProductAvailability = (productId: string) => {
     setProducts((prev) =>
@@ -292,7 +322,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addToCart = (item: CartItem) => {
     setCartItems((prev) => {
-      // If adding from a different restaurant, notify/replace
       if (prev.length > 0 && prev[0].restaurantId !== item.restaurantId) {
         showToast(
           language === 'fr'
@@ -384,96 +413,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return false;
   };
 
-  // Initial Sample Orders
-  const [orders, setOrders] = useState<Order[]>([
-    {
-      id: 'TE-78921',
-      userId: DEFAULT_CUSTOMER_USER.id,
-      customerName: DEFAULT_CUSTOMER_USER.fullName,
-      customerPhone: DEFAULT_CUSTOMER_USER.phone,
-      restaurantId: 'chez-loutcha',
-      restaurantName: 'Chez Loutcha Teranga',
-      restaurantLogo: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=150&q=80',
-      restaurantPhone: '+221 33 821 03 02',
-      restaurantAddress: '101 Rue Joseph Gomis, Dakar Plateau',
-      driver: ASSIGNED_DRIVER,
-      items: [
-        {
-          id: 'item-1',
-          productId: 'thieboudienne-rouge',
-          product: PRODUCTS[0],
-          restaurantId: 'chez-loutcha',
-          restaurantName: 'Chez Loutcha Teranga',
-          quantity: 2,
-          selectedOptions: [],
-          unitPrice: 3500,
-          totalPrice: 7000,
-        },
-        {
-          id: 'item-2',
-          productId: 'jus-bissap-glace',
-          product: PRODUCTS[9],
-          restaurantId: 'chez-loutcha',
-          restaurantName: 'Chez Loutcha Teranga',
-          quantity: 2,
-          selectedOptions: [],
-          unitPrice: 1000,
-          totalPrice: 2000,
-        },
-      ],
-      subtotal: 9000,
-      deliveryFee: 500,
-      discount: 1000,
-      promoCode: 'TERANGA2025',
-      total: 8500,
-      paymentMethod: 'wave',
-      paymentStatus: 'paid',
-      orderStatus: 'delivering',
-      deliveryAddress: {
-        fullName: 'Fatou Ndiaye',
-        phone: '+221 77 543 21 00',
-        neighborhood: 'Dakar Plateau',
-        streetAddress: '15 Avenue Hassan II, Immeuble Horizon',
-        buildingInfo: '3ème étage, Porte B',
-        instructions: 'Sonner à l’interphone ou appeler en bas',
-      },
-      createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-      estimatedDeliveryTime: '20 min',
-      statusHistory: [
-        {
-          status: 'pending',
-          timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-          noteFR: 'Commande reçue et transmise au restaurant.',
-          noteEN: 'Order received and forwarded to restaurant.',
-        },
-        {
-          status: 'accepted',
-          timestamp: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-          noteFR: 'Le chef a accepté la commande.',
-          noteEN: 'The chef has confirmed your order.',
-        },
-        {
-          status: 'preparing',
-          timestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-          noteFR: 'Thiéboudienne et jus de bissap en préparation.',
-          noteEN: 'Thiéboudienne and juices are being prepared.',
-        },
-        {
-          status: 'picked_up',
-          timestamp: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
-          noteFR: 'Amadou Diallo a récupéré votre commande.',
-          noteEN: 'Amadou Diallo has picked up your package.',
-        },
-        {
-          status: 'delivering',
-          timestamp: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-          noteFR: 'Le livreur est en route vers Plateau.',
-          noteEN: 'Courier is heading towards Plateau.',
-        },
-      ],
-    },
-  ]);
-
   const activeOrder = useMemo(() => {
     return (
       orders.find(
@@ -485,7 +424,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, [orders, currentUser]);
 
-  const createOrder = (paymentMethod: PaymentMethod): Order => {
+  // Real Database Order Creation
+  const createOrder = async (paymentMethod: PaymentMethod): Promise<Order> => {
     const firstItem = cartItems[0];
     const restaurant = restaurants.find((r) => r.id === firstItem.restaurantId) || restaurants[0];
 
@@ -499,7 +439,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       restaurantLogo: restaurant.logoUrl,
       restaurantPhone: restaurant.phone,
       restaurantAddress: restaurant.address,
-      driver: ASSIGNED_DRIVER,
       items: [...cartItems],
       subtotal: cartSubtotal,
       deliveryFee: cartDeliveryFee,
@@ -522,11 +461,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ],
     };
 
+    // Update state & persist to Supabase
     setOrders((prev) => [newOrder, ...prev]);
     clearCart();
     setSelectedOrderId(newOrder.id);
+    await dbInsertOrder(newOrder);
 
-    // Create notification
+    // Create In-App notification
     addNotification({
       userId: currentUser.id,
       titleFR: 'Commande Confirmée ! 🛵',
@@ -536,15 +477,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       type: 'order',
       orderId: newOrder.id,
     });
-
     return newOrder;
   };
 
-  const updateOrderStatus = (orderId: string, status: OrderStatus) => {
+  // Real Database Status Update
+  const updateOrderStatus = async (
+    orderId: string,
+    status: OrderStatus,
+    noteFR?: string,
+    noteEN?: string
+  ) => {
     setOrders((prev) =>
       prev.map((ord) => {
         if (ord.id === orderId) {
-          const updated = {
+          return {
             ...ord,
             orderStatus: status,
             deliveredAt: status === 'delivered' ? new Date().toISOString() : ord.deliveredAt,
@@ -553,16 +499,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               {
                 status,
                 timestamp: new Date().toISOString(),
-                noteFR: `Statut mis à jour : ${status}`,
-                noteEN: `Status updated: ${status}`,
+                noteFR: noteFR || `Statut mis à jour : ${status}`,
+                noteEN: noteEN || `Status updated: ${status}`,
               },
             ],
           };
-          return updated;
         }
         return ord;
       })
     );
+    await dbUpdateOrderStatus(orderId, status, noteFR, noteEN);
   };
 
   const reorder = (order: Order) => {
@@ -598,74 +544,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const isFavoriteRestaurant = (id: string) => favoriteRestaurantIds.includes(id);
   const isFavoriteProduct = (id: string) => favoriteProductIds.includes(id);
 
-  // Notifications & Real-Time Simulation Engine
+  // Notifications
   const [notifications, setNotifications] = useState<AppNotification[]>([
     {
-      id: 'notif-1',
-      userId: DEFAULT_CUSTOMER_USER.id,
-      titleFR: 'Livreur en route vers votre adresse ! 🛵',
-      titleEN: 'Driver on the way to your address! 🛵',
-      messageFR: 'Amadou Diallo approche de votre adresse au Plateau avec votre Thiéboudienne.',
-      messageEN: 'Amadou Diallo is approaching your address in Plateau with your Thiéboudienne.',
-      type: 'order',
-      orderStatus: 'delivering',
-      orderId: 'TE-78921',
-      restaurantName: 'Chez Loutcha Teranga',
-      driverName: 'Amadou Diallo',
-      driverPhone: '+221 77 456 78 90',
-      badgeLabelFR: 'EN ROUTE',
-      badgeLabelEN: 'ON THE WAY',
-      actionType: 'track_order',
+      id: 'notif-welcome',
+      userId: currentUser.id,
+      titleFR: 'Bienvenue sur Teranga Eats Dakar ! 🇸🇳',
+      titleEN: 'Welcome to Teranga Eats Dakar! 🇸🇳',
+      messageFR: 'Commandez le meilleur de la gastronomie sénégalaise livré chaud à votre porte.',
+      messageEN: 'Order the best of Senegalese cuisine delivered hot to your doorstep.',
+      type: 'system',
       read: false,
-      createdAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'notif-2',
-      userId: DEFAULT_CUSTOMER_USER.id,
-      titleFR: 'Commande acceptée par le restaurant 👨‍🍳',
-      titleEN: 'Order accepted by the restaurant 👨‍🍳',
-      messageFR: 'Le chef de Chez Loutcha a validé votre commande et démarre la préparation.',
-      messageEN: 'Chez Loutcha chef validated your order and started kitchen prep.',
-      type: 'order',
-      orderStatus: 'accepted',
-      orderId: 'TE-78921',
-      restaurantName: 'Chez Loutcha Teranga',
-      badgeLabelFR: 'ACCEPTÉE',
-      badgeLabelEN: 'ACCEPTED',
-      actionType: 'track_order',
-      read: true,
-      createdAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'notif-3',
-      userId: DEFAULT_CUSTOMER_USER.id,
-      titleFR: 'Offre Spéciale Dakar 🇸🇳',
-      titleEN: 'Dakar Special Offer 🇸🇳',
-      messageFR: 'Profitez de 1 000 FCFA offerts sur tout Dakar avec le code TERANGA2025.',
-      messageEN: 'Enjoy 1,000 FCFA OFF all across Dakar with code TERANGA2025.',
-      type: 'promo',
-      badgeLabelFR: 'PROMO DAKAR',
-      badgeLabelEN: 'DAKAR PROMO',
-      actionType: 'open_promo',
-      read: false,
-      createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
     },
   ]);
 
   const [latestAlertNotification, setLatestAlertNotification] = useState<AppNotification | null>(null);
-  const [isAutoSimulationActive, setIsAutoSimulationActive] = useState(false);
 
-  const unreadNotificationsCount = useMemo(() => {
-    return notifications.filter((n) => !n.read).length;
-  }, [notifications]);
+  const addNotification = (notifData: Omit<AppNotification, 'id' | 'createdAt' | 'read'>) => {
+    const newNotif: AppNotification = {
+      ...notifData,
+      id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+    setNotifications((prev) => [newNotif, ...prev]);
+    setLatestAlertNotification(newNotif);
+  };
+
+  const dismissAlertNotification = () => {
+    setLatestAlertNotification(null);
+  };
 
   const markNotificationAsRead = (id: string) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+    );
   };
 
   const markAllNotificationsAsRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    showToast(language === 'fr' ? 'Toutes les notifications marquées comme lues' : 'All notifications marked as read');
+    showToast(t('allNotificationsMarkedRead'));
   };
 
   const deleteNotification = (id: string) => {
@@ -674,385 +593,72 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const clearAllNotifications = () => {
     setNotifications([]);
-    showToast(language === 'fr' ? 'Historique des notifications effacé' : 'Notifications cleared');
   };
 
-  const dismissAlertNotification = () => {
-    setLatestAlertNotification(null);
+  const unreadNotificationsCount = useMemo(() => {
+    return notifications.filter((n) => !n.read).length;
+  }, [notifications]);
+
+  // Toast
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
   };
 
-  const addNotification = (notifData: Omit<AppNotification, 'id' | 'createdAt' | 'read'>) => {
-    const newNotif: AppNotification = {
-      ...notifData,
-      id: `notif-${Date.now()}`,
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
-    setLatestAlertNotification(newNotif);
-  };
-
-  // Auto-dismiss in-app push alert banner after 6 seconds
-  useEffect(() => {
-    if (latestAlertNotification) {
-      const timer = setTimeout(() => {
-        setLatestAlertNotification(null);
-      }, 6000);
-      return () => clearTimeout(timer);
-    }
-  }, [latestAlertNotification]);
-
-  // Simulate advancing the current active order to the next step
-  const simulateNextOrderStep = (orderId?: string) => {
-    const targetOrder = orderId
-      ? orders.find((o) => o.id === orderId)
-      : activeOrder || orders[0];
-
-    if (!targetOrder) {
-      showToast(language === 'fr' ? 'Aucune commande à simuler' : 'No order to simulate');
-      return;
-    }
-
-    const currentStatus = targetOrder.orderStatus;
-    let nextStatus: OrderStatus = 'accepted';
-    let titleFR = '';
-    let titleEN = '';
-    let msgFR = '';
-    let msgEN = '';
-    let badgeFR = '';
-    let badgeEN = '';
-    let actionType: AppNotification['actionType'] = 'track_order';
-
-    switch (currentStatus) {
-      case 'pending':
-        nextStatus = 'accepted';
-        titleFR = 'Commande acceptée par le restaurant 👨‍🍳';
-        titleEN = 'Order Accepted by Restaurant 👨‍🍳';
-        msgFR = `Le chef de ${targetOrder.restaurantName} a accepté votre commande #${targetOrder.id}. Préparation imminente !`;
-        msgEN = `The chef at ${targetOrder.restaurantName} confirmed your order #${targetOrder.id}. Prep starting!`;
-        badgeFR = 'ACCEPTÉE';
-        badgeEN = 'ACCEPTED';
-        break;
-
-      case 'accepted':
-        nextStatus = 'preparing';
-        titleFR = 'Cuisine en pleine préparation 🍲';
-        titleEN = 'Kitchen Preparing Meal 🍲';
-        msgFR = `Vos plats sénégalais mijotent avec soin dans les cuisines de ${targetOrder.restaurantName}.`;
-        msgEN = `Your authentic dishes are simmering with care in ${targetOrder.restaurantName} kitchens.`;
-        badgeFR = 'EN CUISINE';
-        badgeEN = 'PREPARING';
-        break;
-
-      case 'preparing':
-        nextStatus = 'picked_up';
-        titleFR = 'Commande récupérée & en route 📦';
-        titleEN = 'Order Picked Up & On Way 📦';
-        msgFR = `Amadou Diallo a récupéré votre commande bien chaude chez ${targetOrder.restaurantName}.`;
-        msgEN = `Amadou Diallo picked up your hot food from ${targetOrder.restaurantName}.`;
-        badgeFR = 'RÉCUPÉRÉE';
-        badgeEN = 'PICKED UP';
-        break;
-
-      case 'ready':
-      case 'assigned':
-      case 'picked_up':
-        nextStatus = 'delivering';
-        titleFR = 'Livreur en route vers votre adresse 🛵';
-        titleEN = 'Driver on the way to you 🛵';
-        msgFR = `Amadou Diallo roule actuellement vers ${targetOrder.deliveryAddress.neighborhood || 'votre quartier'}. Arrivée estimée dans quelques minutes !`;
-        msgEN = `Amadou Diallo is riding towards ${targetOrder.deliveryAddress.neighborhood || 'your area'}. ETA in minutes!`;
-        badgeFR = 'EN ROUTE';
-        badgeEN = 'ON THE WAY';
-        break;
-
-      case 'delivering':
-        nextStatus = 'driver_arrived';
-        titleFR = 'Livreur arrivé à votre adresse ! 📍';
-        titleEN = 'Driver Arrived at your Doorstep! 📍';
-        msgFR = `Amadou Diallo est arrivé en bas de votre immeuble avec votre commande #${targetOrder.id}. Vous pouvez le rejoindre ou lui répondre.`;
-        msgEN = `Amadou Diallo has arrived downstairs with your order #${targetOrder.id}. Ready for handoff!`;
-        badgeFR = 'ARRIVÉ 📍';
-        badgeEN = 'ARRIVED 📍';
-        actionType = 'call_driver';
-        break;
-
-      case 'driver_arrived':
-        nextStatus = 'delivered';
-        titleFR = 'Commande livrée avec succès ! 🇸🇳';
-        titleEN = 'Order Successfully Delivered! 🇸🇳';
-        msgFR = `Votre commande #${targetOrder.id} a été remise en mains propres. Bon appétit avec la Teranga !`;
-        msgEN = `Your order #${targetOrder.id} was handed over. Enjoy the authentic Senegalese meal!`;
-        badgeFR = 'LIVRÉE 🎉';
-        badgeEN = 'DELIVERED 🎉';
-        actionType = 'reorder';
-        break;
-
-      case 'delivered':
-      case 'cancelled':
-      default:
-        // Reset to pending or accepted to loop simulation
-        nextStatus = 'pending';
-        titleFR = 'Nouvelle commande créée 🛵';
-        titleEN = 'New Order Placed 🛵';
-        msgFR = `Commande #${targetOrder.id} transmise avec succès à ${targetOrder.restaurantName}.`;
-        msgEN = `Order #${targetOrder.id} placed at ${targetOrder.restaurantName}.`;
-        badgeFR = 'NOUVELLE';
-        badgeEN = 'NEW ORDER';
-        break;
-    }
-
-    // Update order status
-    updateOrderStatus(targetOrder.id, nextStatus);
-
-    // Push rich notification
-    addNotification({
-      userId: currentUser.id,
-      titleFR,
-      titleEN,
-      messageFR: msgFR,
-      messageEN: msgEN,
-      type: 'order',
-      orderStatus: nextStatus,
-      orderId: targetOrder.id,
-      restaurantName: targetOrder.restaurantName,
-      restaurantLogo: targetOrder.restaurantLogo,
-      driverName: 'Amadou Diallo',
-      driverPhone: '+221 77 456 78 90',
-      badgeLabelFR: badgeFR,
-      badgeLabelEN: badgeEN,
-      actionType,
-    });
-
-    showToast(language === 'fr' ? `Statut mis à jour : ${titleFR}` : `Status updated: ${titleEN}`);
-  };
-
-  // Trigger instant specific scenarios
-  const triggerSimulatedScenario = (
-    scenario:
-      | 'order_accepted'
-      | 'driver_arrived'
-      | 'kitchen_prep'
-      | 'order_delivered'
-      | 'promo_dakar'
-      | 'table_booked'
-  ) => {
-    const targetOrder = activeOrder || orders[0];
-
-    switch (scenario) {
-      case 'order_accepted':
-        if (targetOrder) updateOrderStatus(targetOrder.id, 'accepted');
-        addNotification({
-          userId: currentUser.id,
-          titleFR: 'Commande acceptée par le restaurant 👨‍🍳',
-          titleEN: 'Order Accepted by Restaurant 👨‍🍳',
-          messageFR: `Le chef de Chez Loutcha a accepté votre commande #${targetOrder?.id || 'TE-78921'}. Préparation imminente !`,
-          messageEN: `Chef confirmed order #${targetOrder?.id || 'TE-78921'}. Preparation starting!`,
-          type: 'order',
-          orderStatus: 'accepted',
-          orderId: targetOrder?.id || 'TE-78921',
-          restaurantName: 'Chez Loutcha Teranga',
-          badgeLabelFR: 'ACCEPTÉE',
-          badgeLabelEN: 'ACCEPTED',
-          actionType: 'track_order',
-        });
-        break;
-
-      case 'driver_arrived':
-        if (targetOrder) updateOrderStatus(targetOrder.id, 'driver_arrived');
-        addNotification({
-          userId: currentUser.id,
-          titleFR: 'Livreur arrivé à votre adresse ! 📍',
-          titleEN: 'Driver Arrived at your Doorstep! 📍',
-          messageFR: 'Amadou Diallo est en bas de votre immeuble avec votre commande bien chaude. Prêt pour la remise !',
-          messageEN: 'Amadou Diallo is downstairs with your hot meal. Ready for pickup!',
-          type: 'driver',
-          orderStatus: 'driver_arrived',
-          orderId: targetOrder?.id || 'TE-78921',
-          restaurantName: 'Chez Loutcha Teranga',
-          driverName: 'Amadou Diallo',
-          driverPhone: '+221 77 456 78 90',
-          badgeLabelFR: 'ARRIVÉ 📍',
-          badgeLabelEN: 'ARRIVED 📍',
-          actionType: 'call_driver',
-        });
-        break;
-
-      case 'kitchen_prep':
-        if (targetOrder) updateOrderStatus(targetOrder.id, 'preparing');
-        addNotification({
-          userId: currentUser.id,
-          titleFR: 'Cuisine en pleine préparation 🍲',
-          titleEN: 'Kitchen Preparing Meal 🍲',
-          messageFR: 'Vos délicieux plats sénégalais sont sur le feu chez Chez Loutcha.',
-          messageEN: 'Your delicious dishes are being cooked at Chez Loutcha.',
-          type: 'order',
-          orderStatus: 'preparing',
-          orderId: targetOrder?.id || 'TE-78921',
-          restaurantName: 'Chez Loutcha Teranga',
-          badgeLabelFR: 'EN CUISINE',
-          badgeLabelEN: 'COOKING',
-          actionType: 'track_order',
-        });
-        break;
-
-      case 'order_delivered':
-        if (targetOrder) updateOrderStatus(targetOrder.id, 'delivered');
-        addNotification({
-          userId: currentUser.id,
-          titleFR: 'Commande livrée avec succès ! 🇸🇳',
-          titleEN: 'Order Delivered! 🇸🇳',
-          messageFR: `Votre commande #${targetOrder?.id || 'TE-78921'} a été livrée. Régalez-vous avec la Teranga !`,
-          messageEN: `Your order #${targetOrder?.id || 'TE-78921'} is delivered. Bon appétit!`,
-          type: 'order',
-          orderStatus: 'delivered',
-          orderId: targetOrder?.id || 'TE-78921',
-          restaurantName: 'Chez Loutcha Teranga',
-          badgeLabelFR: 'LIVRÉE 🎉',
-          badgeLabelEN: 'DELIVERED 🎉',
-          actionType: 'reorder',
-        });
-        break;
-
-      case 'promo_dakar':
-        addNotification({
-          userId: currentUser.id,
-          titleFR: 'Flash Promo Dakar 🇸🇳 1 500 FCFA',
-          titleEN: 'Dakar Flash Promo 🇸🇳 1,500 FCFA',
-          messageFR: 'Économisez 1 500 FCFA dès 7 000 FCFA d’achat avec le code promo TERANGAFLASH.',
-          messageEN: 'Save 1,500 FCFA on orders over 7,000 FCFA with promo code TERANGAFLASH.',
-          type: 'promo',
-          badgeLabelFR: 'FLASH PROMO',
-          badgeLabelEN: 'FLASH PROMO',
-          actionType: 'open_promo',
-        });
-        break;
-
-      case 'table_booked':
-        addNotification({
-          userId: currentUser.id,
-          titleFR: 'Table confirmée au Jardin Thaïlandais 🪑',
-          titleEN: 'Table Confirmed at Le Jardin Thaïlandais 🪑',
-          messageFR: 'Votre table pour 2 personnes en Terrasse ce soir à 20:00 est confirmée.',
-          messageEN: 'Your table for 2 guests on the Terrace tonight at 20:00 is confirmed.',
-          type: 'booking',
-          restaurantName: 'Le Jardin Thaïlandais',
-          badgeLabelFR: 'TABLE CONFIRMÉE',
-          badgeLabelEN: 'BOOKING CONFIRMED',
-          actionType: 'view_booking',
-        });
-        break;
-    }
-  };
-
-  const toggleAutoSimulation = () => {
-    setIsAutoSimulationActive((prev) => {
-      const nextVal = !prev;
-      showToast(
-        language === 'fr'
-          ? nextVal
-            ? 'Simulation automatique activée (mises à jour toutes les 12s)'
-            : 'Simulation automatique désactivée'
-          : nextVal
-          ? 'Auto simulation enabled (updates every 12s)'
-          : 'Auto simulation disabled'
-      );
-      return nextVal;
-    });
-  };
-
-  // Automatic ticker when isAutoSimulationActive is ON
-  useEffect(() => {
-    if (!isAutoSimulationActive) return;
-
-    const interval = setInterval(() => {
-      simulateNextOrderStep();
-    }, 12000);
-
-    return () => clearInterval(interval);
-  }, [isAutoSimulationActive, activeOrder, orders]);
-
-  // Table Bookings System
-  const [bookings, setBookings] = useState<TableBooking[]>(() => {
-    const saved = localStorage.getItem('teranga_bookings');
-    return saved ? JSON.parse(saved) : INITIAL_BOOKINGS;
-  });
-
+  // Table Bookings (Real Database)
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [bookingRestaurant, setBookingRestaurant] = useState<Restaurant | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<TableBooking | null>(null);
 
   const openBookingModal = (restaurant?: Restaurant) => {
-    if (restaurant) {
-      setBookingRestaurant(restaurant);
-    } else {
-      setBookingRestaurant(restaurants[0] || null);
-    }
+    setBookingRestaurant(restaurant || restaurants[0] || null);
     setIsBookingModalOpen(true);
   };
 
   const closeBookingModal = () => {
     setIsBookingModalOpen(false);
-    setBookingRestaurant(null);
   };
 
-  const createBooking = (
+  const createBooking = async (
     data: Omit<TableBooking, 'id' | 'createdAt' | 'confirmationCode' | 'status'>
-  ): TableBooking => {
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+  ): Promise<TableBooking> => {
+    const randomCode = `TB-${Math.floor(1000 + Math.random() * 9000)}`;
     const newBooking: TableBooking = {
       ...data,
-      id: `bk-${Date.now()}`,
+      id: `booking-${Date.now()}`,
+      confirmationCode: randomCode,
       status: 'confirmed',
       createdAt: new Date().toISOString(),
-      confirmationCode: `TRG-BK-${randomSuffix}`,
     };
 
-    const updated = [newBooking, ...bookings];
-    setBookings(updated);
-    localStorage.setItem('teranga_bookings', JSON.stringify(updated));
+    setBookings((prev) => [newBooking, ...prev]);
+    await dbInsertBooking(newBooking);
 
-    // Send in-app notification
     addNotification({
       userId: currentUser.id,
-      titleFR: 'Table Réservée ! 🎉',
-      titleEN: 'Table Booked! 🎉',
-      messageFR: `Votre table pour ${newBooking.guestsCount} personne(s) chez ${newBooking.restaurantName} le ${newBooking.date} à ${newBooking.time} est confirmée.`,
-      messageEN: `Your table for ${newBooking.guestsCount} guest(s) at ${newBooking.restaurantName} on ${newBooking.date} at ${newBooking.time} is confirmed.`,
+      titleFR: 'Table Réservée avec Succès ! 🍽️',
+      titleEN: 'Table Reserved Successfully! 🍽️',
+      messageFR: `Votre table pour ${newBooking.guestsCount} personne(s) chez ${newBooking.restaurantName} est confirmée (${newBooking.date} à ${newBooking.time}).`,
+      messageEN: `Your table for ${newBooking.guestsCount} guest(s) at ${newBooking.restaurantName} is confirmed (${newBooking.date} at ${newBooking.time}).`,
       type: 'booking',
       bookingId: newBooking.id,
     });
-
-    showToast(
-      language === 'fr'
-        ? `Table réservée chez ${newBooking.restaurantName} !`
-        : `Table booked at ${newBooking.restaurantName}!`
-    );
-
     return newBooking;
   };
 
-  const cancelBooking = (bookingId: string) => {
-    const updated = bookings.map((b) =>
-      b.id === bookingId ? { ...b, status: 'cancelled' as const } : b
+  const cancelBooking = async (bookingId: string) => {
+    setBookings((prev) =>
+      prev.map((b) => (b.id === bookingId ? { ...b, status: 'cancelled' as const } : b))
     );
-    setBookings(updated);
-    localStorage.setItem('teranga_bookings', JSON.stringify(updated));
+    await dbCancelBooking(bookingId);
     showToast(
       language === 'fr'
-        ? 'Réservation annulée avec succès'
-        : 'Reservation cancelled successfully'
+        ? 'Réservation annulée avec succès.'
+        : 'Reservation successfully cancelled.'
     );
-  };
-
-  // Toast
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((current) => (current === msg ? null : current));
-    }, 3000);
   };
 
   return (
@@ -1061,13 +667,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         language,
         setLanguage,
         t,
+        isSupabaseConnected: isSupabaseConfigured,
+                syncData,
         currentUser,
         setCurrentUser,
-        role: currentUser.role,
+                role: currentUser.role,
         switchRole,
         isAuthenticated,
-        login,
-        register,
         logout,
         activeScreen,
         setActiveScreen,
@@ -1121,10 +727,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addNotification,
         latestAlertNotification,
         dismissAlertNotification,
-        simulateNextOrderStep,
-        triggerSimulatedScenario,
-        isAutoSimulationActive,
-        toggleAutoSimulation,
         toastMessage,
         showToast,
         bookings,

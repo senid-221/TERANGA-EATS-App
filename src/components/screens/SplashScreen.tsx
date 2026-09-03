@@ -4,19 +4,23 @@ import { motion } from 'motion/react';
 import { Sparkles, Utensils } from 'lucide-react';
 
 export const SplashScreen: React.FC = () => {
-  const { setActiveScreen, t, language } = useApp();
+  const { setActiveScreen, t, language, isAuthenticated } = useApp();
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setActiveScreen('onboarding');
+      if (isAuthenticated) {
+        setActiveScreen('app');
+      } else {
+        setActiveScreen('onboarding');
+      }
     }, 2800);
     return () => clearTimeout(timer);
-  }, [setActiveScreen]);
+  }, [setActiveScreen, isAuthenticated]);
 
   return (
     <div
       id="splash-screen"
-      onClick={() => setActiveScreen('onboarding')}
+      onClick={() => setActiveScreen(isAuthenticated ? 'app' : 'onboarding')}
       className="relative min-h-screen w-full bg-gradient-to-b from-[#006633] via-[#044D26] to-[#012E17] flex flex-col items-center justify-between p-8 text-white select-none cursor-pointer overflow-hidden"
     >
       {/* Background Decorative Senegal Waves */}

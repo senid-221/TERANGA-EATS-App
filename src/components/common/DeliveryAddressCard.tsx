@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { DAKAR_NEIGHBORHOODS } from '../../data/mockData';
+import { DAKAR_NEIGHBORHOODS } from '../../data/constants';
 import { Building, Check, Locate, MapPin, Phone, User } from 'lucide-react';
 import { motion } from 'motion/react';
 

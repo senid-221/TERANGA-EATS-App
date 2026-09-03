@@ -3,17 +3,20 @@ import { useApp } from '../../context/AppContext';
 import { RestaurantCard } from '../common/RestaurantCard';
 import { ProductCard } from '../common/ProductCard';
 import { EmptyState } from '../common/EmptyState';
+import { DakarRestaurantsMap } from '../maps/DakarRestaurantsMap';
 import {
   ArrowLeft,
   Clock,
   Filter,
   Flame,
+  MapPin,
   Search as SearchIcon,
   SlidersHorizontal,
   Sparkles,
   Star,
   Utensils,
   X,
+  Map as MapIcon,
 } from 'lucide-react';
 import { Product, Restaurant } from '../../types';
 
@@ -31,7 +34,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'popular' | 'rating' | 'time' | 'price'>('popular');
-  const [viewType, setViewType] = useState<'all' | 'restaurants' | 'dishes'>('all');
+  const [viewType, setViewType] = useState<'all' | 'restaurants' | 'dishes' | 'map'>('all');
 
   const filterChips = [
     { id: 'all', label: t('filterAll') },
@@ -207,6 +210,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           >
             Plats ({filteredProducts.length})
           </button>
+          <button
+            onClick={() => setViewType('map')}
+            className={`px-3.5 py-1.5 rounded-xl font-black transition-all cursor-pointer flex items-center gap-1 ${
+              viewType === 'map' ? 'bg-[#006633] text-white shadow-xs' : 'text-[#006633] hover:bg-white/60'
+            }`}
+          >
+            <MapIcon className="w-3.5 h-3.5" />
+            <span>Carte Dakar 🗺️</span>
+          </button>
         </div>
 
         {/* Sort selector */}
@@ -222,7 +234,22 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       </div>
 
       {/* Results Rendering */}
-      {totalResults === 0 ? (
+      {viewType === 'map' ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-heading font-black text-base text-[#2D2D2D] flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-[#006633]" />
+              <span>Carte interactive des restaurants à Dakar ({filteredRestaurants.length})</span>
+            </h3>
+            <span className="text-xs text-gray-500 font-bold">Cliquez sur un marqueur pour commander</span>
+          </div>
+          <DakarRestaurantsMap
+            restaurants={filteredRestaurants}
+            onSelectRestaurant={(r) => onOpenRestaurantDetail(r)}
+            height="h-[480px] sm:h-[540px]"
+          />
+        </div>
+      ) : totalResults === 0 ? (
         <EmptyState
           icon="🔍"
           title={t('noResults')}

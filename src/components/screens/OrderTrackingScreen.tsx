@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { OrderStatusTimeline } from '../common/OrderStatusTimeline';
 import { Primary3DButton } from '../common/Primary3DButton';
+import { OrderDeliveryMap } from '../maps/OrderDeliveryMap';
+import { DAKAR_NEIGHBORHOODS } from '../../data/constants';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -29,7 +31,7 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({
   orderId,
   onBack,
 }) => {
-  const { t, language, orders, updateOrderStatus, showToast } = useApp();
+  const { t, language, orders, restaurants, updateOrderStatus, showToast } = useApp();
   const order = orders.find((o) => o.id === orderId) || orders[0];
 
   const [showChatModal, setShowChatModal] = useState(false);
@@ -58,6 +60,28 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({
       </div>
     );
   }
+
+  // Look up coordinates
+  const restObj = restaurants.find((r) => r.id === order.restaurantId);
+  const matchedNeighborhood = DAKAR_NEIGHBORHOODS.find(
+    (n) => n.name.toLowerCase() === order.deliveryAddress.neighborhood.toLowerCase() ||
+           order.deliveryAddress.neighborhood.toLowerCase().includes(n.id)
+  );
+
+  const restaurantData = {
+    name: order.restaurantName,
+    latitude: restObj?.latitude || 14.6708,
+    longitude: restObj?.longitude || -17.4381,
+    address: order.restaurantAddress,
+    logoUrl: order.restaurantLogo,
+  };
+
+  const deliveryData = {
+    neighborhood: order.deliveryAddress.neighborhood,
+    street: order.deliveryAddress.streetAddress,
+    latitude: order.deliveryAddress.lat || matchedNeighborhood?.lat || 14.7118,
+    longitude: order.deliveryAddress.lng || matchedNeighborhood?.lng || -17.4699,
+  };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,86 +144,15 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({
         </div>
       </div>
 
-      {/* Dakar Live Interactive Simulated Map Card */}
+      {/* Dakar Live Interactive Google Map */}
       <div className="px-4 sm:px-6">
-        <div className="relative h-64 sm:h-72 w-full rounded-[36px] overflow-hidden shadow-artistic-lg border border-[#F0EDE8] bg-slate-900">
-          {/* Map Vector Dakar Coastline / Grid */}
-          <svg className="w-full h-full object-cover" viewBox="0 0 600 350" preserveAspectRatio="none">
-            {/* Sea background */}
-            <rect width="600" height="350" fill="#0A1E2C" />
-            {/* Dakar Peninsula Land Shape */}
-            <path
-              d="M 50,0 Q 200,80 350,40 T 550,120 L 600,350 L 100,350 Q 80,240 50,150 Z"
-              fill="#0E331E"
-              opacity="0.95"
-            />
-            {/* Road Networks (Corniche Ouest, VDN, Autoroute) */}
-            <path
-              d="M 120,40 Q 250,100 380,180 T 500,300"
-              stroke="#FFCC00"
-              strokeWidth="4"
-              fill="none"
-              strokeDasharray="6,4"
-              opacity="0.85"
-            />
-            <path
-              d="M 220,20 Q 300,120 420,220"
-              stroke="#006633"
-              strokeWidth="3"
-              fill="none"
-              opacity="0.6"
-            />
-          </svg>
-
-          {/* Restaurant Marker */}
-          <div className="absolute top-12 left-16 flex flex-col items-center">
-            <div className="w-9 h-9 rounded-2xl bg-[#FFCC00] text-amber-950 flex items-center justify-center shadow-lg font-black text-xs ring-4 ring-[#FFCC00]/40">
-              <Utensils className="w-4 h-4" />
-            </div>
-            <span className="text-[10px] font-extrabold text-white bg-black/70 px-2 py-0.5 rounded-md mt-1 backdrop-blur-xs">
-              {order.restaurantName}
-            </span>
-          </div>
-
-          {/* Moving Driver Scooter Marker */}
-          <motion.div
-            className="absolute flex flex-col items-center z-10"
-            style={{
-              top: `${25 + driverProgress * 0.45}%`,
-              left: `${20 + driverProgress * 0.55}%`,
-            }}
-            transition={{ type: 'spring', damping: 20 }}
-          >
-            <div className="relative">
-              <div className="w-12 h-12 rounded-full bg-[#006633] text-[#FFCC00] flex items-center justify-center shadow-2xl ring-4 ring-white border-2 border-[#FFCC00]">
-                <Motorbike className="w-6 h-6" />
-              </div>
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-[#E8702A] animate-ping" />
-            </div>
-            <span className="text-[10px] font-black text-white bg-[#006633] px-2.5 py-0.5 rounded-full mt-1 shadow-md">
-              Amadou (Livreur)
-            </span>
-          </motion.div>
-
-          {/* Customer Destination Marker */}
-          <div className="absolute bottom-10 right-14 flex flex-col items-center">
-            <div className="w-9 h-9 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg ring-4 ring-red-300/50 animate-bounce">
-              <MapPin className="w-5 h-5 fill-white text-red-600" />
-            </div>
-            <span className="text-[10px] font-extrabold text-white bg-black/70 px-2 py-0.5 rounded-md mt-1 backdrop-blur-xs">
-              {order.deliveryAddress.neighborhood}
-            </span>
-          </div>
-
-          {/* Map Overlay Stats */}
-          <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md rounded-2xl p-2.5 px-3 text-white text-xs space-y-0.5 border border-white/10">
-            <div className="flex items-center gap-1.5 font-black text-[#FFCC00]">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{order.estimatedDeliveryTime}</span>
-            </div>
-            <p className="text-[10px] text-gray-300">Corniche Ouest Dakar</p>
-          </div>
-        </div>
+        <OrderDeliveryMap
+          restaurant={restaurantData}
+          deliveryAddress={deliveryData}
+          driver={order.driver}
+          estimatedTime={order.estimatedDeliveryTime}
+          progressPercent={driverProgress}
+        />
       </div>
 
       {/* 5-Step Order Progress Timeline */}

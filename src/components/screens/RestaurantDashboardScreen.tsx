@@ -1,32 +1,28 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { ArrowLeft, ChefHat, Check, Clock, DollarSign, Flame, PackageCheck, Sparkles, Utensils, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChefHat,
+  Check,
+  Clock,
+  DollarSign,
+  Flame,
+  PackageCheck,
+  Sparkles,
+  Utensils,
+  X,
+  ShoppingBag,
+} from 'lucide-react';
 import { OrderStatus } from '../../types';
 
 export const RestaurantDashboardScreen: React.FC = () => {
-  const { t, language, orders, products, updateOrderStatus, switchRole, showToast } = useApp();
+  const { t, language, orders, products, updateOrderStatus, switchRole, showToast, toggleProductAvailability } = useApp();
 
-  // Pick Chez Loutcha as the primary managed restaurant
-  const currentRestaurantId = 'rest-1';
-  const restaurantOrders = orders.filter((o) => o.restaurantId === currentRestaurantId || true);
-  const restaurantProducts = products.filter((p) => p.restaurantId === currentRestaurantId);
+  // All restaurant orders or for current restaurant
+  const restaurantOrders = orders;
 
-  const [dishStock, setDishStock] = useState<Record<string, boolean>>({
-    'prod-1': true,
-    'prod-2': true,
-    'prod-4': true,
-  });
-
-  const toggleStock = (prodId: string) => {
-    setDishStock((prev) => {
-      const next = { ...prev, [prodId]: !prev[prodId] };
-      showToast(next[prodId] ? 'Plat marqué disponible' : 'Plat marqué épuisé (Rupture)');
-      return next;
-    });
-  };
-
-  const handleUpdateStatus = (orderId: string, newStatus: OrderStatus) => {
-    updateOrderStatus(orderId, newStatus);
+  const handleUpdateStatus = async (orderId: string, newStatus: OrderStatus) => {
+    await updateOrderStatus(orderId, newStatus);
     showToast(`Commande ${orderId} : ${newStatus}`);
   };
 
@@ -50,7 +46,7 @@ export const RestaurantDashboardScreen: React.FC = () => {
               <span className="px-3 py-0.5 rounded-full bg-white/20 text-[#FFCC00] text-xs font-black uppercase tracking-wider">
                 Cuisine en direct
               </span>
-              <span className="text-xs text-white/80 font-medium">Chez Loutcha • Dakar Plateau</span>
+              <span className="text-xs text-white/80 font-medium">Portail Restaurateur Dakar</span>
             </div>
             <h2 className="font-heading font-black text-xl sm:text-2xl text-white">
               {t('restaurantDashboardTitle')}
@@ -75,85 +71,93 @@ export const RestaurantDashboardScreen: React.FC = () => {
           </h3>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-          {restaurantOrders.map((order) => {
-            return (
-              <div
-                key={order.id}
-                className="bg-white rounded-[32px] p-6 border border-[#F0EDE8] shadow-artistic flex flex-col justify-between space-y-4"
-              >
-                <div>
-                  <div className="flex justify-between items-start pb-3 border-b border-[#F0EDE8]">
-                    <div>
-                      <span className="text-xs font-black text-[#006633]">{order.id}</span>
-                      <p className="text-xs font-bold text-[#2D2D2D] mt-0.5">{order.customerName}</p>
+        {restaurantOrders.length === 0 ? (
+          <div className="bg-white rounded-[32px] p-10 border border-[#F0EDE8] shadow-artistic text-center text-gray-400">
+            <ShoppingBag className="w-10 h-10 mx-auto mb-2 opacity-40" />
+            <p className="text-sm font-bold text-gray-600">Aucune commande en attente.</p>
+            <p className="text-xs mt-1">Dès qu'un client passe commande, elle apparaîtra instantanément ici.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+            {restaurantOrders.map((order) => {
+              return (
+                <div
+                  key={order.id}
+                  className="bg-white rounded-[32px] p-6 border border-[#F0EDE8] shadow-artistic flex flex-col justify-between space-y-4"
+                >
+                  <div>
+                    <div className="flex justify-between items-start pb-3 border-b border-[#F0EDE8]">
+                      <div>
+                        <span className="text-xs font-black text-[#006633]">{order.id}</span>
+                        <p className="text-xs font-bold text-[#2D2D2D] mt-0.5">{order.customerName}</p>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-xs font-black uppercase tracking-wider">
+                        {order.orderStatus}
+                      </span>
                     </div>
-                    <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-xs font-black uppercase tracking-wider">
-                      {order.status}
-                    </span>
+
+                    <div className="py-3 space-y-2 text-xs">
+                      {order.items.map((item) => (
+                        <div key={item.id} className="flex justify-between font-medium">
+                          <span className="text-[#2D2D2D]">
+                            {item.quantity}x {language === 'fr' ? item.product.nameFR : item.product.nameEN}
+                          </span>
+                          <span className="text-gray-500 font-bold">{item.totalPrice.toLocaleString()} F</span>
+                        </div>
+                      ))}
+
+                      {order.items[0]?.specialInstructions && (
+                        <p className="text-[11px] text-amber-900 bg-amber-50 p-2.5 rounded-2xl mt-2 font-medium border border-amber-100">
+                          📝 {order.items[0].specialInstructions}
+                        </p>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="py-3 space-y-2 text-xs">
-                    {order.items.map((item) => (
-                      <div key={item.id} className="flex justify-between font-medium">
-                        <span className="text-[#2D2D2D]">
-                          {item.quantity}x {language === 'fr' ? item.product.nameFR : item.product.nameEN}
-                        </span>
-                        <span className="text-gray-500 font-bold">{item.totalPrice.toLocaleString()} F</span>
-                      </div>
-                    ))}
-
-                    {order.items[0]?.specialInstructions && (
-                      <p className="text-[11px] text-amber-900 bg-amber-50 p-2.5 rounded-2xl mt-2 font-medium border border-amber-100">
-                        📝 {order.items[0].specialInstructions}
-                      </p>
+                  {/* Kitchen Actions */}
+                  <div className="pt-3 border-t border-[#F0EDE8] flex gap-2">
+                    {order.orderStatus === 'accepted' || order.orderStatus === 'pending' ? (
+                      <button
+                        onClick={() => handleUpdateStatus(order.id, 'preparing')}
+                        className="flex-1 py-3 rounded-2xl bg-[#006633] text-white font-black text-xs hover:bg-[#00552B] cursor-pointer shadow-artistic transition-all active:scale-98"
+                      >
+                        🍳 Lancer la préparation
+                      </button>
+                    ) : order.orderStatus === 'preparing' ? (
+                      <button
+                        onClick={() => handleUpdateStatus(order.id, 'ready')}
+                        className="flex-1 py-3 rounded-2xl bg-[#FFCC00] text-[#2D2D2D] font-black text-xs hover:bg-yellow-400 cursor-pointer shadow-artistic transition-all active:scale-98"
+                      >
+                        📦 Prête pour le coursier
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleUpdateStatus(order.id, 'delivering')}
+                        className="flex-1 py-3 rounded-2xl bg-sky-600 text-white font-black text-xs hover:bg-sky-700 cursor-pointer shadow-artistic transition-all active:scale-98"
+                      >
+                        🛵 Remise au livreur
+                      </button>
                     )}
                   </div>
                 </div>
-
-                {/* Kitchen Actions */}
-                <div className="pt-3 border-t border-[#F0EDE8] flex gap-2">
-                  {order.status === 'accepted' || order.status === 'pending' ? (
-                    <button
-                      onClick={() => handleUpdateStatus(order.id, 'preparing')}
-                      className="flex-1 py-3 rounded-2xl bg-[#006633] text-white font-black text-xs hover:bg-[#00552B] cursor-pointer shadow-artistic transition-all active:scale-98"
-                    >
-                      🍳 Lancer la préparation
-                    </button>
-                  ) : order.status === 'preparing' ? (
-                    <button
-                      onClick={() => handleUpdateStatus(order.id, 'ready')}
-                      className="flex-1 py-3 rounded-2xl bg-[#FFCC00] text-[#2D2D2D] font-black text-xs hover:bg-yellow-400 cursor-pointer shadow-artistic transition-all active:scale-98"
-                    >
-                      📦 Prête pour le coursier
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleUpdateStatus(order.id, 'delivering')}
-                      className="flex-1 py-3 rounded-2xl bg-sky-600 text-white font-black text-xs hover:bg-sky-700 cursor-pointer shadow-artistic transition-all active:scale-98"
-                    >
-                      🛵 Remise au livreur
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Dish Availability Toggle */}
       <div className="bg-white rounded-[32px] p-6 border border-[#F0EDE8] shadow-artistic space-y-4">
         <div>
           <h3 className="font-heading font-black text-base text-[#2D2D2D]">
-            Gestion du stock des plats
+            Gestion de la carte et du stock des plats
           </h3>
           <p className="text-xs text-gray-500 font-medium">Activez ou désactivez les plats en cas de rupture</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
-          {restaurantProducts.map((prod) => {
-            const inStock = dishStock[prod.id] !== false;
+          {products.slice(0, 12).map((prod) => {
+            const inStock = prod.available !== false;
             return (
               <div
                 key={prod.id}
@@ -167,7 +171,10 @@ export const RestaurantDashboardScreen: React.FC = () => {
                 </div>
 
                 <button
-                  onClick={() => toggleStock(prod.id)}
+                  onClick={() => {
+                    toggleProductAvailability(prod.id);
+                    showToast(inStock ? 'Plat marqué épuisé' : 'Plat marqué disponible');
+                  }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all active:scale-95 ${
                     inStock
                       ? 'bg-emerald-100 text-[#006633]'

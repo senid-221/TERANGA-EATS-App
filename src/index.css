@@ -13,6 +13,18 @@
   }
 }
 
+/* Hide Clerk watermarks and logos completely */
+.cl-internal-b3al4t, 
+.cl-internal-1x7q53a, 
+.cl-internal-phgxcj,
+.cl-watermark,
+.cl-footerAction__logo,
+.cl-securedBy {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
 /* Artistic Flair custom 3D & tactile button styles */
 .btn-3d-primary {
   background: linear-gradient(180deg, #007A3D 0%, #006633 100%);
