@@ -109,7 +109,7 @@ app.patch('/api/admin/orders/:id/status', async (req, res) => {
 });
 
 const money = (n) => `${new Intl.NumberFormat('fr-FR').format(Math.round(Number(n) || 0))} FCFA`;
-const mapsLink = (a = {}) => typeof a.lat === 'number' && typeof a.lng === 'number'
+const mapsLink = (a: any = {}) => typeof a.lat === 'number' && typeof a.lng === 'number'
   ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.lat},${a.lng}`)}`
   : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([a.streetAddress, a.buildingInfo, a.neighborhood].filter(Boolean).join(', ') || 'Rwanda')}`;
 const notifyWhatsApp = async (order) => {
