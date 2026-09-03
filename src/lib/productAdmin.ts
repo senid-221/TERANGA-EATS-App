@@ -29,6 +29,10 @@ export const saveProduct = async (product: Product, _token?: string | null, crea
   return request(url, method, product, token);
 };
 
+export const createProduct = async (product: Product, token?: string | null): Promise<boolean> => {
+  return saveProduct(product, token, true);
+};
+
 export const removeProduct = async (productId: string, _token?: string | null): Promise<boolean> => {
   const token = _token || await getClerkToken();
   if (!token) return false;
