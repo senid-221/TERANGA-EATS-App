@@ -14,30 +14,31 @@ interface OrderItemPayload {
 }
 
 interface OrderNotificationPayload {
-  order?: {
-    id: string;
-    customerName: string;
-    customerPhone: string;
-    restaurantName: string;
-    items: OrderItemPayload[];
-    subtotal: number;
-    deliveryFee: number;
-    discount: number;
-    total: number;
-    paymentMethod: string;
-    deliveryAddress: {
-      neighborhood?: string;
-      streetAddress?: string;
-      buildingInfo?: string;
-      instructions?: string;
-      lat?: number;
-      lng?: number;
-    };
-  };
+  orderId?: string;
 }
 
-type DeliveryAddressPayload = NonNullable<OrderNotificationPayload['order']>['deliveryAddress'];
-type OrderPayload = NonNullable<OrderNotificationPayload['order']>;
+type DeliveryAddressPayload = {
+  neighborhood?: string;
+  streetAddress?: string;
+  buildingInfo?: string;
+  instructions?: string;
+  lat?: number;
+  lng?: number;
+};
+
+type OrderPayload = {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  restaurantName: string;
+  items: OrderItemPayload[];
+  subtotal: number;
+  deliveryFee: number;
+  discount: number;
+  total: number;
+  paymentMethod: string;
+  deliveryAddress: DeliveryAddressPayload;
+};
 
 const formatMoney = (amount: number) => `${new Intl.NumberFormat('fr-FR').format(Math.round(amount || 0))} FCFA`;
 
@@ -155,6 +156,20 @@ const productRow = (p: any) => ({
   options: p.options ?? [],
 });
 
+const orderFromRow = (row: any): OrderPayload => ({
+  id: row.id,
+  customerName: row.customer_name,
+  customerPhone: row.customer_phone,
+  restaurantName: row.restaurant_name || row.restaurant_id || 'Restaurant',
+  items: Array.isArray(row.items) ? row.items : [],
+  subtotal: Number(row.subtotal || 0),
+  deliveryFee: Number(row.delivery_fee || 0),
+  discount: Number(row.discount || 0),
+  total: Number(row.total || 0),
+  paymentMethod: row.payment_method || 'cash_on_delivery',
+  deliveryAddress: row.delivery_address && typeof row.delivery_address === 'object' ? row.delivery_address : {},
+});
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
@@ -209,13 +224,22 @@ async function startServer() {
     return res.json({ ok: true });
   });
 
-  // Customer order -> server -> WhatsApp Cloud API -> Admin WhatsApp.
+  // Customer order -> server fetches the trusted DB row -> WhatsApp Cloud API -> Admin WhatsApp.
+  // Only the order ID is accepted from the browser, preventing spoofed customer/price/location data.
   app.post('/api/admin/notify-order', async (req, res) => {
     try {
-      const order = (req.body as OrderNotificationPayload).order;
-      if (!order?.id || !order.customerName || !order.customerPhone) {
-        return res.status(400).json({ ok: false, error: 'Invalid order notification payload.' });
+      const orderId = String((req.body as OrderNotificationPayload)?.orderId || '').trim();
+      if (!orderId) return res.status(400).json({ ok: false, error: 'Order ID is required.' });
+      if (!adminDb) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
+
+      const { data: row, error } = await adminDb.from('orders').select('id,customer_name,customer_phone,restaurant_name,items,subtotal,delivery_fee,discount,total,payment_method,delivery_address').eq('id', orderId).single();
+      if (error || !row) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
+
+      const order = orderFromRow(row);
+      if (!order.customerName || !order.customerPhone) {
+        return res.status(400).json({ ok: false, notificationSent: false, reason: 'Order is missing customer contact details.' });
       }
+
       const result = await sendWhatsAppOrderNotification(order);
       if (!result.configured) return res.status(202).json({ ok: true, notificationSent: false, reason: result.reason });
       if (!result.sent) return res.status(502).json({ ok: false, notificationSent: false, reason: result.reason });
