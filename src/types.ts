@@ -11,8 +11,8 @@ export interface User {
   role: UserRole;
   language: AppLanguage;
   createdAt: string;
-  restaurantId?: string; // If user is a restaurant owner
-  vehicleInfo?: string;  // If user is a driver
+  restaurantId?: string;
+  vehicleInfo?: string;
 }
 
 export interface DakarNeighborhood {
@@ -122,24 +122,16 @@ export interface CartItem {
 }
 
 export type OrderStatus =
-  | 'pending'
-  | 'accepted'
-  | 'preparing'
-  | 'ready'
-  | 'assigned'
-  | 'picked_up'
-  | 'delivering'
-  | 'driver_arrived'
-  | 'delivered'
-  | 'cancelled';
+  | 'pending' | 'accepted' | 'preparing' | 'ready' | 'assigned'
+  | 'picked_up' | 'delivering' | 'driver_arrived' | 'delivered' | 'cancelled';
 
 export type PaymentMethod = 'wave' | 'orange_money' | 'mtn' | 'cash_on_delivery';
-
 export type PaymentStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'cash_pending';
 
 export interface DeliveryAddress {
   fullName: string;
   phone: string;
+  email?: string;
   neighborhood: string;
   streetAddress: string;
   buildingInfo?: string;
@@ -166,6 +158,7 @@ export interface Order {
   userId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string;
   restaurantId: string;
   restaurantName: string;
   restaurantLogo: string;
@@ -185,12 +178,7 @@ export interface Order {
   createdAt: string;
   estimatedDeliveryTime: string;
   deliveredAt?: string;
-  statusHistory: {
-    status: OrderStatus;
-    timestamp: string;
-    noteFR: string;
-    noteEN: string;
-  }[];
+  statusHistory: { status: OrderStatus; timestamp: string; noteFR: string; noteEN: string }[];
 }
 
 export interface Review {
@@ -215,7 +203,7 @@ export interface Promotion {
   descriptionEN: string;
   imageUrl: string;
   discountType: 'percentage' | 'fixed';
-  discountValue: number; // e.g. 20 (for 20%) or 1000 (for 1000 FCFA)
+  discountValue: number;
   minOrderValue: number;
   startDate: string;
   endDate: string;
@@ -260,8 +248,8 @@ export interface TableBooking {
   guestName: string;
   guestPhone: string;
   guestEmail?: string;
-  date: string; // YYYY-MM-DD
-  time: string; // HH:mm
+  date: string;
+  time: string;
   guestsCount: number;
   seatingArea: SeatingArea;
   specialRequests?: string;
