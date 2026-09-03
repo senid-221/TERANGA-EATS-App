@@ -3,13 +3,13 @@ import { AppProvider, useApp } from './context/AppContext';
 import { SplashScreen } from './components/screens/SplashScreen';
 import { LanguageScreen } from './components/screens/LanguageScreen';
 import { ProductsScreen } from './components/screens/ProductsScreen';
-import { AdminDashboardScreen } from './components/screens/AdminDashboardScreen';
+import { AdminGate } from './components/auth/AdminGate';
 
 const MainAppContent: React.FC = () => {
   const { activeScreen } = useApp();
 
   if (window.location.pathname.replace(/\/$/, '') === '/admin') {
-    return <AdminDashboardScreen />;
+    return <AdminGate />;
   }
 
   if (activeScreen === 'splash') return <SplashScreen />;
