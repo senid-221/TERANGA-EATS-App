@@ -7,17 +7,13 @@ import './index.css';
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 if (!clerkPublishableKey) {
-  console.warn('VITE_CLERK_PUBLISHABLE_KEY is not configured. Admin authentication cannot start.');
+  throw new Error('VITE_CLERK_PUBLISHABLE_KEY is required. Configure it in the production environment.');
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {clerkPublishableKey ? (
-      <ClerkProvider publishableKey={clerkPublishableKey}>
-        <App />
-      </ClerkProvider>
-    ) : (
+    <ClerkProvider publishableKey={clerkPublishableKey}>
       <App />
-    )}
+    </ClerkProvider>
   </StrictMode>,
 );
