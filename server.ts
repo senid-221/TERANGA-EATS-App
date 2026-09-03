@@ -33,14 +33,17 @@ interface OrderNotificationPayload {
   };
 }
 
+type DeliveryAddressPayload = NonNullable<OrderNotificationPayload['order']>['deliveryAddress'];
+type OrderPayload = NonNullable<OrderNotificationPayload['order']>;
+
 const formatMoney = (amount: number) => `${new Intl.NumberFormat('fr-FR').format(Math.round(amount || 0))} FCFA`;
 
-const buildMapsLink = (address: OrderNotificationPayload['order']['deliveryAddress']) => {
-  if (typeof address?.lat === 'number' && typeof address?.lng === 'number') {
+const buildMapsLink = (address: DeliveryAddressPayload) => {
+  if (typeof address.lat === 'number' && typeof address.lng === 'number') {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${address.lat},${address.lng}`)}`;
   }
 
-  const query = [address?.streetAddress, address?.buildingInfo, address?.neighborhood]
+  const query = [address.streetAddress, address.buildingInfo, address.neighborhood]
     .filter(Boolean)
     .join(', ');
   return query
@@ -48,7 +51,7 @@ const buildMapsLink = (address: OrderNotificationPayload['order']['deliveryAddre
     : 'https://www.google.com/maps';
 };
 
-const buildOrderMessage = (order: NonNullable<OrderNotificationPayload['order']>) => {
+const buildOrderMessage = (order: OrderPayload) => {
   const items = order.items
     .map((item) => `• ${item.quantity || 1} × ${item.nameFR || item.nameEN || 'Produit'} — ${formatMoney(item.totalPrice ?? (item.unitPrice || 0) * (item.quantity || 1))}`)
     .join('\n');
@@ -81,18 +84,14 @@ const buildOrderMessage = (order: NonNullable<OrderNotificationPayload['order']>
   ].filter(Boolean).join('\n');
 };
 
-const sendWhatsAppOrderNotification = async (order: NonNullable<OrderNotificationPayload['order']>) => {
+const sendWhatsAppOrderNotification = async (order: OrderPayload) => {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const adminNumber = process.env.WHATSAPP_ADMIN_NUMBER;
   const apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
 
   if (!accessToken || !phoneNumberId || !adminNumber) {
-    return {
-      sent: false,
-      configured: false,
-      reason: 'WhatsApp credentials are not configured on the server.',
-    };
+    return { sent: false, configured: false, reason: 'WhatsApp credentials are not configured on the server.' };
   }
 
   const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
