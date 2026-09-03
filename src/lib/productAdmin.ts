@@ -1,13 +1,10 @@
 import { Product } from '../types';
 
-const request = async (url: string, method: string, productOrId: Product | string, token: string | null) => {
+const request = async (url: string, method: string, productOrId: Product | string, token: string) => {
   const isProduct = typeof productOrId !== 'string';
   const response = await fetch(url, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(isProduct ? { product: productOrId } : undefined),
   });
   const result = await response.json().catch(() => ({}));
@@ -18,10 +15,10 @@ const request = async (url: string, method: string, productOrId: Product | strin
   return Boolean(result?.ok);
 };
 
-export const saveProduct = async (product: Product, token?: string | null): Promise<boolean> => {
+export const saveProduct = async (product: Product, token?: string | null, create = false): Promise<boolean> => {
   if (!token) return false;
-  const method = product.createdAt ? 'PUT' : 'POST';
-  const url = method === 'PUT' ? `/api/admin/products/${encodeURIComponent(product.id)}` : '/api/admin/products';
+  const method = create ? 'POST' : 'PUT';
+  const url = create ? '/api/admin/products' : `/api/admin/products/${encodeURIComponent(product.id)}`;
   return request(url, method, product, token);
 };
 
