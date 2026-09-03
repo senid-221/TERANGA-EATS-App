@@ -8,11 +8,11 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "rm -rf .server && vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=.server/server.js",
+    "build": "rm -f server.js server.js.map && vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=server.js",
     "prestart": "npm run build",
     "start": "node server.js",
     "preview": "vite preview",
-    "clean": "rm -rf dist .server server.js",
+    "clean": "rm -rf dist server.js server.js.map",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
