@@ -8,6 +8,11 @@ const configuredAdminEmails = (import.meta.env.VITE_ADMIN_EMAILS || '')
   .map((email: string) => email.trim().toLowerCase())
   .filter(Boolean);
 
+const configuredAdminUserIds = (import.meta.env.VITE_ADMIN_USER_IDS || '')
+  .split(',')
+  .map((id: string) => id.trim())
+  .filter(Boolean);
+
 export const AdminGate: React.FC = () => {
   const { isLoaded, isSignedIn, user } = useUser();
 
@@ -41,7 +46,10 @@ export const AdminGate: React.FC = () => {
 
   const metadataRole = user.publicMetadata?.role;
   const email = user.primaryEmailAddress?.emailAddress?.toLowerCase() || '';
-  const isAdmin = metadataRole === 'admin' || configuredAdminEmails.includes(email);
+  const isAdmin =
+    metadataRole === 'admin' ||
+    configuredAdminUserIds.includes(user.id) ||
+    configuredAdminEmails.includes(email);
 
   if (!isAdmin) {
     return (
