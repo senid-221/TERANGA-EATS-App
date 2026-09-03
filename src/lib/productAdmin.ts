@@ -1,5 +1,11 @@
 import { Product } from '../types';
 
+const getClerkToken = async (): Promise<string | null> => {
+  if (typeof window === 'undefined') return null;
+  const clerk = (window as typeof window & { Clerk?: { session?: { getToken?: () => Promise<string | null> } } }).Clerk;
+  return clerk?.session?.getToken ? clerk.session.getToken() : null;
+};
+
 const request = async (url: string, method: string, productOrId: Product | string, token: string) => {
   const isProduct = typeof productOrId !== 'string';
   const response = await fetch(url, {
@@ -15,14 +21,16 @@ const request = async (url: string, method: string, productOrId: Product | strin
   return Boolean(result?.ok);
 };
 
-export const saveProduct = async (product: Product, token?: string | null, create = false): Promise<boolean> => {
+export const saveProduct = async (product: Product, _token?: string | null, create = false): Promise<boolean> => {
+  const token = _token || await getClerkToken();
   if (!token) return false;
   const method = create ? 'POST' : 'PUT';
   const url = create ? '/api/admin/products' : `/api/admin/products/${encodeURIComponent(product.id)}`;
   return request(url, method, product, token);
 };
 
-export const removeProduct = async (productId: string, token?: string | null): Promise<boolean> => {
+export const removeProduct = async (productId: string, _token?: string | null): Promise<boolean> => {
+  const token = _token || await getClerkToken();
   if (!token) return false;
   return request(`/api/admin/products/${encodeURIComponent(productId)}`, 'DELETE', productId, token);
 };
