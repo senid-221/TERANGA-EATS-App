@@ -1,122 +1,142 @@
-import express from "express";
-import path from "path";
-import { createServer as createViteServer } from "vite";
-import { createClerkClient } from "@clerk/backend";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import "dotenv/config";
+import express from 'express';
+import path from 'path';
+import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
+import 'dotenv/config';
 
-interface OrderItemPayload {
-  nameFR?: string;
-  nameEN?: string;
-  quantity?: number;
-  unitPrice?: number;
-  totalPrice?: number;
-}
+const app = express();
+const PORT = Number(process.env.PORT || 3000);
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '');
+const SESSION_SECRET = String(process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_PASSWORD || '');
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
 
-interface OrderNotificationPayload { orderId?: string; }
-type DeliveryAddressPayload = { neighborhood?: string; streetAddress?: string; buildingInfo?: string; instructions?: string; lat?: number; lng?: number; };
-type OrderPayload = { id: string; customerName: string; customerPhone: string; restaurantName: string; items: OrderItemPayload[]; subtotal: number; deliveryFee: number; discount: number; total: number; paymentMethod: string; deliveryAddress: DeliveryAddressPayload; };
+app.use(express.json({ limit: '256kb' }));
 
-type AllowedOrderStatus = 'pending' | 'accepted' | 'preparing' | 'ready' | 'assigned' | 'picked_up' | 'delivering' | 'driver_arrived' | 'delivered' | 'cancelled';
-const ALLOWED_ORDER_STATUSES = new Set<AllowedOrderStatus>(['pending','accepted','preparing','ready','assigned','picked_up','delivering','driver_arrived','delivered','cancelled']);
-
-const formatMoney = (amount: number) => `${new Intl.NumberFormat('fr-FR').format(Math.round(amount || 0))} FCFA`;
-const buildMapsLink = (address: DeliveryAddressPayload) => {
-  if (typeof address.lat === 'number' && typeof address.lng === 'number') return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${address.lat},${address.lng}`)}`;
-  const query = [address.streetAddress, address.buildingInfo, address.neighborhood].filter(Boolean).join(', ');
-  return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : 'https://www.google.com/maps';
+const sign = (value) => crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
+const makeSession = (email) => {
+  const expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const payload = `${email}|${expires}`;
+  return `${Buffer.from(payload).toString('base64url')}.${sign(payload)}`;
 };
-const buildOrderMessage = (order: OrderPayload) => {
-  const items = order.items.map((item) => `• ${item.quantity || 1} × ${item.nameFR || item.nameEN || 'Produit'} — ${formatMoney(item.totalPrice ?? (item.unitPrice || 0) * (item.quantity || 1))}`).join('\n');
-  const address = order.deliveryAddress;
-  const addressText = [address.neighborhood, address.streetAddress, address.buildingInfo].filter(Boolean).join(', ') || 'Adresse non précisée';
-  return ['🛎️ *NOUVELLE COMMANDE — TERANGAEATS*', '', `🆔 Commande : *${order.id}*`, `👤 Client : *${order.customerName}*`, `📱 WhatsApp/Tél : *${order.customerPhone}*`, `🍽️ Restaurant : *${order.restaurantName}*`, '', '🛒 *Produits :*', items || '• Aucun produit', '', `Sous-total : ${formatMoney(order.subtotal)}`, `Livraison : ${formatMoney(order.deliveryFee)}`, `Réduction : ${formatMoney(order.discount)}`, `💰 *TOTAL : ${formatMoney(order.total)}*`, `💳 Paiement : ${order.paymentMethod}`, '', `📍 *Livraison :* ${addressText}`, address.instructions ? `📝 Instructions : ${address.instructions}` : '', `🗺️ *Google Maps :* ${buildMapsLink(address)}`].filter(Boolean).join('\n');
-};
-
-const sendWhatsAppOrderNotification = async (order: OrderPayload) => {
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN, phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID, adminNumber = process.env.WHATSAPP_ADMIN_NUMBER, apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
-  if (!accessToken || !phoneNumberId || !adminNumber) return { sent: false, configured: false, reason: 'WhatsApp credentials are not configured on the server.' };
-  const response = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: adminNumber.replace(/\D/g, ''), type: 'text', text: { preview_url: true, body: buildOrderMessage(order) } }) });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) { console.error('WhatsApp order notification failed:', result); return { sent: false, configured: true, reason: 'WhatsApp API rejected the message.' }; }
-  return { sent: true, configured: true, messageId: result?.messages?.[0]?.id };
-};
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const adminUserIds = (process.env.ADMIN_USER_IDS || 'user_3IovuJeKnlbTyX5UYfDYuV1Wk1v').split(',').map((v) => v.trim()).filter(Boolean);
-const clerk = process.env.CLERK_SECRET_KEY && process.env.CLERK_PUBLISHABLE_KEY ? createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY, publishableKey: process.env.CLERK_PUBLISHABLE_KEY }) : null;
-const adminDb: SupabaseClient | null = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
-const notifiedOrderIds = new Set<string>();
-
-const authenticateAdmin = async (req: express.Request, res: express.Response): Promise<string | null> => {
-  if (!clerk) { res.status(503).json({ ok: false, error: 'Clerk server authentication is not configured.' }); return null; }
+const validSession = (token) => {
+  if (!token || !SESSION_SECRET) return false;
+  const [encoded, signature] = token.split('.');
+  if (!encoded || !signature) return false;
   try {
-    const request = new Request(`${process.env.APP_URL || 'http://localhost:3000'}${req.originalUrl}`, { method: req.method, headers: new Headers({ authorization: req.header('authorization') || '' }) });
-    const state = await clerk.authenticateRequest(request, { authorizedParties: (process.env.CLERK_AUTHORIZED_PARTIES || `${process.env.APP_URL || 'http://localhost:3000'},http://localhost:3000`).split(',').map((v) => v.trim()).filter(Boolean) });
-    if (!state.isAuthenticated) { res.status(401).json({ ok: false, error: 'Authentication required.' }); return null; }
-    const userId = state.toAuth().userId;
-    if (!userId || !adminUserIds.includes(userId)) { res.status(403).json({ ok: false, error: 'Administrator access required.' }); return null; }
-    return userId;
-  } catch (error) { console.error('Clerk admin authentication failed:', error); res.status(401).json({ ok: false, error: 'Invalid authentication token.' }); return null; }
+    const payload = Buffer.from(encoded, 'base64url').toString('utf8');
+    const expected = sign(payload);
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false;
+    const [email, expiry] = payload.split('|');
+    return email === ADMIN_EMAIL && Number(expiry) > Date.now();
+  } catch { return false; }
+};
+const getCookie = (req, name) => String(req.headers.cookie || '').split(';').map((v) => v.trim()).find((v) => v.startsWith(`${name}=`))?.slice(name.length + 1);
+const authenticateAdmin = (req, res) => {
+  if (validSession(getCookie(req, 'teranga_admin_session'))) return true;
+  res.status(401).json({ ok: false, error: 'Authentication required.' });
+  return false;
 };
 
-const productRow = (p: any) => ({ id: p.id, restaurant_id: p.restaurantId, restaurant_name: p.restaurantName, category_id: p.categoryId, name_fr: p.nameFR, name_en: p.nameEN, description_fr: p.descriptionFR, description_en: p.descriptionEN, image_url: p.imageUrl, price: p.price, original_price: p.originalPrice ?? null, available: p.available, rating: p.rating ?? 0, review_count: p.reviewCount ?? 0, prep_time_minutes: p.prepTimeMinutes ?? 20, is_spicy: p.isSpicy ?? false, is_popular: p.isPopular ?? false, is_signature: p.isSignature ?? false, ingredients_fr: p.ingredientsFR ?? [], ingredients_en: p.ingredientsEN ?? [], options: p.options ?? [] });
-const orderFromRow = (row: any): OrderPayload => ({ id: row.id, customerName: row.customer_name, customerPhone: row.customer_phone, restaurantName: row.restaurant_name || row.restaurant_id || 'Restaurant', items: Array.isArray(row.items) ? row.items : [], subtotal: Number(row.subtotal || 0), deliveryFee: Number(row.delivery_fee || 0), discount: Number(row.discount || 0), total: Number(row.total || 0), paymentMethod: row.payment_method || 'cash_on_delivery', deliveryAddress: row.delivery_address && typeof row.delivery_address === 'object' ? row.delivery_address : {} });
-const orderForAdmin = (row: any) => ({ ...row, restaurantId: row.restaurant_id, restaurantName: row.restaurant_name, restaurantLogo: row.restaurant_logo, restaurantPhone: row.restaurant_phone, restaurantAddress: row.restaurant_address, userId: row.user_id, customerName: row.customer_name, customerPhone: row.customer_phone, deliveryAddress: row.delivery_address, paymentMethod: row.payment_method, paymentStatus: row.payment_status, orderStatus: row.order_status, statusHistory: row.status_history || [], createdAt: row.created_at, deliveredAt: row.delivered_at, estimatedDeliveryTime: row.estimated_delivery_time });
+app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'TerangaEats' }));
 
-async function startServer() {
-  const app = express();
-  const PORT = Number(process.env.PORT || 3000);
-  app.use(express.json({ limit: '256kb' }));
+app.post('/api/admin/login', (req, res) => {
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD || !SESSION_SECRET) return res.status(503).json({ ok: false, error: 'Admin authentication is not configured on the server.' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const emailOk = email === ADMIN_EMAIL;
+  const passwordOk = password.length === ADMIN_PASSWORD.length && crypto.timingSafeEqual(Buffer.from(password), Buffer.from(ADMIN_PASSWORD));
+  if (!emailOk || !passwordOk) return res.status(401).json({ ok: false, error: 'Invalid admin email or password.' });
+  res.setHeader('Set-Cookie', `teranga_admin_session=${makeSession(email)}; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax`);
+  return res.json({ ok: true });
+});
+app.post('/api/admin/logout', (_req, res) => {
+  res.setHeader('Set-Cookie', 'teranga_admin_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax');
+  res.json({ ok: true });
+});
+app.get('/api/admin/session', (req, res) => res.json({ ok: validSession(getCookie(req, 'teranga_admin_session')) }));
 
-  app.get('/api/admin/orders', async (req, res) => {
-    if (!(await authenticateAdmin(req, res))) return;
-    if (!adminDb) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
-    const { data, error } = await adminDb.from('orders').select('*').order('created_at', { ascending: false });
-    if (error) return res.status(500).json({ ok: false, error: 'Unable to load orders.' });
-    return res.json({ ok: true, orders: (data || []).map(orderForAdmin) });
-  });
+const productRow = (p) => ({ id: p.id, restaurant_id: p.restaurantId, restaurant_name: p.restaurantName, category_id: p.categoryId, name_fr: p.nameFR, name_en: p.nameEN, description_fr: p.descriptionFR, description_en: p.descriptionEN, image_url: p.imageUrl, price: p.price, original_price: p.originalPrice ?? null, available: p.available, rating: p.rating ?? 0, review_count: p.reviewCount ?? 0, prep_time_minutes: p.prepTimeMinutes ?? 20, is_spicy: p.isSpicy ?? false, is_popular: p.isPopular ?? false, is_signature: p.isSignature ?? false, ingredients_fr: p.ingredientsFR ?? [], ingredients_en: p.ingredientsEN ?? [], options: p.options ?? [] });
+const orderForAdmin = (row) => ({ ...row, restaurantId: row.restaurant_id, restaurantName: row.restaurant_name, restaurantLogo: row.restaurant_logo, restaurantPhone: row.restaurant_phone, restaurantAddress: row.restaurant_address, userId: row.user_id, customerName: row.customer_name, customerPhone: row.customer_phone, deliveryAddress: row.delivery_address, paymentMethod: row.payment_method, paymentStatus: row.payment_status, orderStatus: row.order_status, statusHistory: row.status_history || [], createdAt: row.created_at, deliveredAt: row.delivered_at, estimatedDeliveryTime: row.estimated_delivery_time });
+const allowedStatuses = new Set(['pending','accepted','preparing','ready','assigned','picked_up','delivering','driver_arrived','delivered','cancelled']);
 
-  app.post('/api/admin/products', async (req, res) => { if (!(await authenticateAdmin(req, res))) return; if (!adminDb) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' }); const product = req.body?.product; if (!product?.id || !product?.restaurantId || !product?.categoryId || !product?.nameFR || !product?.nameEN) return res.status(400).json({ ok: false, error: 'Invalid product payload.' }); const { error } = await adminDb.from('products').insert(productRow(product)); if (error) return res.status(400).json({ ok: false, error: error.message }); return res.json({ ok: true }); });
-  app.put('/api/admin/products/:id', async (req, res) => { if (!(await authenticateAdmin(req, res))) return; if (!adminDb) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' }); const product = { ...(req.body?.product || {}), id: req.params.id }; const { id, ...updates } = productRow(product); const { error } = await adminDb.from('products').update(updates).eq('id', id); if (error) return res.status(400).json({ ok: false, error: error.message }); return res.json({ ok: true }); });
-  app.delete('/api/admin/products/:id', async (req, res) => { if (!(await authenticateAdmin(req, res))) return; if (!adminDb) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' }); const { error } = await adminDb.from('products').delete().eq('id', req.params.id); if (error) return res.status(400).json({ ok: false, error: error.message }); return res.json({ ok: true }); });
+app.get('/api/admin/orders', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
+  const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ ok: false, error: 'Unable to load orders.' });
+  res.json({ ok: true, orders: (data || []).map(orderForAdmin) });
+});
+app.post('/api/admin/products', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
+  const p = req.body?.product;
+  if (!p?.id || !p?.restaurantId || !p?.categoryId || !p?.nameFR || !p?.nameEN) return res.status(400).json({ ok: false, error: 'Invalid product payload.' });
+  const { error } = await supabase.from('products').insert(productRow(p));
+  if (error) return res.status(400).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+app.put('/api/admin/products/:id', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
+  const p = { ...(req.body?.product || {}), id: req.params.id };
+  const { id, ...updates } = productRow(p);
+  const { error } = await supabase.from('products').update(updates).eq('id', id);
+  if (error) return res.status(400).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+app.delete('/api/admin/products/:id', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
+  const { error } = await supabase.from('products').delete().eq('id', req.params.id);
+  if (error) return res.status(400).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+app.patch('/api/admin/orders/:id/status', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
+  const { status, noteFR, noteEN } = req.body || {};
+  if (!allowedStatuses.has(status)) return res.status(400).json({ ok: false, error: 'Invalid order status.' });
+  const { data: current, error: readError } = await supabase.from('orders').select('status_history').eq('id', req.params.id).single();
+  if (readError) return res.status(404).json({ ok: false, error: 'Order not found.' });
+  const history = Array.isArray(current?.status_history) ? current.status_history : [];
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('orders').update({ order_status: status, status_history: [...history, { status, timestamp: now, noteFR: noteFR || `Statut : ${status}`, noteEN: noteEN || `Status: ${status}` }], delivered_at: status === 'delivered' ? now : null }).eq('id', req.params.id);
+  if (error) return res.status(400).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
 
-  app.patch('/api/admin/orders/:id/status', async (req, res) => {
-    if (!(await authenticateAdmin(req, res))) return;
-    if (!adminDb) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
-    const { status, noteFR, noteEN } = req.body || {};
-    if (typeof status !== 'string' || !ALLOWED_ORDER_STATUSES.has(status as AllowedOrderStatus)) return res.status(400).json({ ok: false, error: 'Invalid order status.' });
-    if (noteFR !== undefined && typeof noteFR !== 'string') return res.status(400).json({ ok: false, error: 'Invalid French status note.' });
-    if (noteEN !== undefined && typeof noteEN !== 'string') return res.status(400).json({ ok: false, error: 'Invalid English status note.' });
-    const { data: current, error: readError } = await adminDb.from('orders').select('status_history').eq('id', req.params.id).single();
-    if (readError) return res.status(404).json({ ok: false, error: 'Order not found.' });
-    const history = Array.isArray(current?.status_history) ? current.status_history : [];
-    const now = new Date().toISOString();
-    const { error } = await adminDb.from('orders').update({ order_status: status, status_history: [...history, { status, timestamp: now, noteFR: noteFR || `Statut : ${status}`, noteEN: noteEN || `Status: ${status}` }], delivered_at: status === 'delivered' ? now : null }).eq('id', req.params.id);
-    if (error) return res.status(400).json({ ok: false, error: error.message });
-    return res.json({ ok: true });
-  });
+const money = (n) => `${new Intl.NumberFormat('fr-FR').format(Math.round(Number(n) || 0))} FCFA`;
+const mapsLink = (a = {}) => typeof a.lat === 'number' && typeof a.lng === 'number'
+  ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.lat},${a.lng}`)}`
+  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([a.streetAddress, a.buildingInfo, a.neighborhood].filter(Boolean).join(', ') || 'Rwanda')}`;
+const notifyWhatsApp = async (order) => {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const adminNumber = process.env.WHATSAPP_ADMIN_NUMBER;
+  if (!token || !phoneId || !adminNumber) return false;
+  const items = (order.items || []).map((i) => `• ${i.quantity || 1} × ${i.nameFR || i.nameEN || 'Produit'} — ${money(i.totalPrice ?? (i.unitPrice || 0) * (i.quantity || 1))}`).join('\n');
+  const a = order.delivery_address || {};
+  const address = [a.neighborhood, a.streetAddress, a.buildingInfo].filter(Boolean).join(', ') || 'Adresse non précisée';
+  const body = ['🛎️ *NOUVELLE COMMANDE — TERANGAEATS*', `🆔 Commande : *${order.id}*`, `👤 Client : *${order.customer_name}*`, `📱 WhatsApp/Tél : *${order.customer_phone}*`, '', '🛒 *Produits :*', items || '• Aucun produit', '', `💰 *TOTAL : ${money(order.total)}*`, `💳 Paiement : ${order.payment_method || 'cash_on_delivery'}`, `📍 Livraison : ${address}`, `🗺️ *Google Maps :* ${mapsLink(a)}`].join('\n');
+  const version = process.env.WHATSAPP_API_VERSION || 'v21.0';
+  const r = await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: adminNumber.replace(/\D/g, ''), type: 'text', text: { preview_url: true, body } }) });
+  return r.ok;
+};
+app.post('/api/admin/notify-order', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
+  const id = String(req.body?.orderId || '').trim();
+  if (!id) return res.status(400).json({ ok: false, notificationSent: false, reason: 'Order ID is required.' });
+  const { data, error } = await supabase.from('orders').select('*').eq('id', id).single();
+  if (error || !data) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
+  const sent = await notifyWhatsApp(data);
+  res.status(sent ? 200 : 202).json({ ok: true, notificationSent: sent, reason: sent ? undefined : 'WhatsApp is not configured or rejected the message.' });
+});
 
-  app.post('/api/admin/notify-order', async (req, res) => {
-    try {
-      const orderId = String((req.body as OrderNotificationPayload)?.orderId || '').trim();
-      if (!orderId) return res.status(400).json({ ok: false, error: 'Order ID is required.' });
-      if (!adminDb) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
-      if (notifiedOrderIds.has(orderId)) return res.status(200).json({ ok: true, notificationSent: false, reason: 'Order notification already sent during this server session.' });
-      const { data: row, error } = await adminDb.from('orders').select('id,customer_name,customer_phone,restaurant_name,items,subtotal,delivery_fee,discount,total,payment_method,delivery_address').eq('id', orderId).single();
-      if (error || !row) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
-      const order = orderFromRow(row);
-      if (!order.customerName || !order.customerPhone) return res.status(400).json({ ok: false, notificationSent: false, reason: 'Order is missing customer contact details.' });
-      const result = await sendWhatsAppOrderNotification(order);
-      if (!result.configured) return res.status(202).json({ ok: true, notificationSent: false, reason: result.reason });
-      if (!result.sent) return res.status(502).json({ ok: false, notificationSent: false, reason: result.reason });
-      notifiedOrderIds.add(orderId);
-      return res.json({ ok: true, notificationSent: true, messageId: result.messageId });
-    } catch (error) { console.error('Order WhatsApp notification route error:', error); return res.status(500).json({ ok: false, notificationSent: false, error: 'Unable to send WhatsApp notification.' }); }
-  });
-
-  if (process.env.NODE_ENV !== "production") { const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" }); app.use(vite.middlewares); } else { const distPath = path.join(process.cwd(), 'dist'); app.use(express.static(distPath)); app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html'))); }
-  app.listen(PORT, () => console.log(`TerangaEats server running on port ${PORT}`));
-}
-startServer().catch((error) => { console.error(error); process.exit(1); });
+const distPath = path.join(process.cwd(), 'dist');
+app.use(express.static(distPath));
+app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
+app.listen(PORT, '0.0.0.0', () => console.log(`TerangaEats server running on port ${PORT}`));
