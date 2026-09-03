@@ -14,7 +14,7 @@ export const AdminGate: React.FC = () => {
     try {
       const response = await fetch('/api/admin/session', { credentials: 'include' });
       const data = await response.json().catch(() => ({}));
-      setAuthenticated(Boolean(response.ok && data.ok && data.authenticated));
+      setAuthenticated(Boolean(response.ok && data.ok));
     } catch {
       setAuthenticated(false);
     } finally {
@@ -22,7 +22,7 @@ export const AdminGate: React.FC = () => {
     }
   };
 
-  useEffect(() => { checkSession(); }, []);
+  useEffect(() => { void checkSession(); }, []);
 
   const login = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -37,13 +37,12 @@ export const AdminGate: React.FC = () => {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) {
-        setError(data.error || 'Invalid admin email or password.');
-        return;
+        throw new Error(data.error || 'Invalid admin email or password.');
       }
       await checkSession();
       setPassword('');
-    } catch {
-      setError('Unable to connect to the admin server.');
+    } catch (err: any) {
+      setError(err?.message || 'Unable to connect to the admin server.');
     } finally {
       setSubmitting(false);
     }
