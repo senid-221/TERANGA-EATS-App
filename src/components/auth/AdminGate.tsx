@@ -5,45 +5,19 @@ import { DriverAssignmentPanel } from '../admin/DriverAssignmentPanel';
 import { AdminLiveMap } from '../admin/AdminLiveMap';
 import { useApp } from '../../context/AppContext';
 
-const SUPABASE_PROJECT_URL = (() => {
-  const url = String((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SUPABASE_URL || '').trim();
-  const match = url.match(/^https:\/\/([a-z0-9-]+)\.supabase\.co\/?$/i);
-  return match ? `https://supabase.com/dashboard/project/${match[1]}` : '';
-})();
-
 class AdminDashboardErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error: Error, info: ErrorInfo) { console.error('Admin dashboard render error:', error, info); }
-  render() {
+  constructor(props: { children: React.ReactNode }) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError(): { hasError: boolean } { return { hasError: true }; }
+  componentDidCatch(error: Error, info: ErrorInfo): void { console.error('Admin dashboard render error:', error, info); }
+  render(): React.ReactNode {
     if (!this.state.hasError) return this.props.children;
     return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white"><div className="w-full max-w-lg rounded-2xl border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl"><AlertTriangle className="mx-auto mb-4 h-10 w-10 text-red-400"/><h1 className="text-xl font-bold">Admin Dashboard could not be loaded</h1><p className="mt-2 text-sm text-slate-400">Please refresh the page and try again.</p><button onClick={() => window.location.reload()} className="mt-6 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950">Refresh Dashboard</button></div></div>;
   }
 }
 
 const AdminDashboardBridge: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
-  const { syncData, showToast, orders } = useApp();
-  useEffect(() => {
-    const handleClick = async (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null; if (!target) return;
-      const button = target.closest('button'); const label = button?.textContent?.replace(/\s+/g, ' ').trim();
-      if (label === 'Actualiser DB') { event.preventDefault(); event.stopPropagation(); try { await syncData(); showToast('Base de données actualisée.'); } catch { showToast('Impossible d’actualiser la base de données.'); } return; }
-      if (label === 'Déconnexion') {
-        event.preventDefault(); event.stopPropagation();
-        try { await fetch('/api/admin/logout', { method:'POST', credentials:'include' }); }
-        finally { onLogout(); window.location.replace('/admin'); }
-        return;
-      }
-      const connectedBadge = Array.from(document.querySelectorAll('a, span')).find(node => node.textContent?.trim() === '● Supabase Connecté');
-      if (connectedBadge && connectedBadge.contains(target) && SUPABASE_PROJECT_URL) {
-        event.preventDefault(); event.stopPropagation(); window.open(SUPABASE_PROJECT_URL, '_blank', 'noopener,noreferrer'); return;
-      }
-      const localBadge = Array.from(document.querySelectorAll('span')).find(node => node.textContent?.trim() === '● Base locale');
-      if (localBadge && localBadge.contains(target)) { event.preventDefault(); event.stopPropagation(); showToast('Mode Base locale actif. Les données locales restent disponibles.'); }
-    };
-    document.addEventListener('click', handleClick, true); return () => document.removeEventListener('click', handleClick, true);
-  }, [syncData, showToast, onLogout]);
-  return <AdminDashboardErrorBoundary><AdminDashboardScreen /><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-8"><DriverAssignmentPanel orders={orders} /></div><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-28"><AdminLiveMap /></div></AdminDashboardErrorBoundary>;
+  const { orders } = useApp();
+  return <AdminDashboardErrorBoundary><AdminDashboardScreen onLogout={onLogout} /><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-8"><DriverAssignmentPanel orders={orders} /></div><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-28"><AdminLiveMap /></div></AdminDashboardErrorBoundary>;
 };
 
 export const AdminGate: React.FC = () => {
