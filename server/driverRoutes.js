@@ -55,7 +55,7 @@ const orderForDriver = row => ({
   deliveredAt: row.delivered_at, statusHistory: row.status_history || []
 });
 
-export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateAdmin) => {
+export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateAdmin, notifyAdmin) => {
   const secret = `${sessionSecret}:driver`;
   const requireDriver = async (req, res) => {
     const driverId = readSession(req, secret);
@@ -68,11 +68,23 @@ export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateA
 
   app.post('/api/driver/login', async (req, res) => {
     if (!supabase || !sessionSecret) return res.status(503).json({ ok: false, error: 'Driver authentication is not configured.' });
-    const login = String(req.body?.login || '').trim().toLowerCase();
+    const login = String(req.body?.login || '').trim();
     const password = String(req.body?.password || '');
     if (!login || !password) return res.status(400).json({ ok: false, error: 'Login and password are required.' });
-    const { data: drivers } = await supabase.from('drivers').select('*').eq('active', true).or(`id.eq.${login},email.eq.${login},phone.eq.${login}`);
-    const driver = (drivers || []).find(d => verifyPassword(password, d.password_hash));
+
+    let drivers = [];
+    const idResult = await supabase.from('drivers').select('*').eq('active', true).eq('id', login).limit(1);
+    if (idResult.data?.length) drivers = idResult.data;
+    if (!drivers.length) {
+      const emailResult = await supabase.from('drivers').select('*').eq('active', true).eq('email', login.toLowerCase()).limit(1);
+      if (emailResult.data?.length) drivers = emailResult.data;
+    }
+    if (!drivers.length) {
+      const phoneResult = await supabase.from('drivers').select('*').eq('active', true).eq('phone', login).limit(1);
+      if (phoneResult.data?.length) drivers = phoneResult.data;
+    }
+
+    const driver = drivers.find(d => verifyPassword(password, d.password_hash));
     if (!driver) return res.status(401).json({ ok: false, error: 'Identifiants Driver incorrects.' });
     res.setHeader('Set-Cookie', `${COOKIE}=${makeSession(driver.id, secret)}; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax`);
     res.json({ ok: true, driver: publicDriver(driver) });
@@ -103,14 +115,42 @@ export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateA
     const allowed = new Set(['picked_up', 'delivering', 'driver_arrived', 'delivered']);
     const status = String(req.body?.status || '');
     if (!allowed.has(status)) return res.status(400).json({ ok: false, error: 'Invalid driver status.' });
-    const { data: order } = await supabase.from('orders').select('status_history,driver_id').eq('id', req.params.id).single();
+    const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
     if (!order || order.driver_id !== driver.id) return res.status(404).json({ ok: false, error: 'Order not assigned to this driver.' });
+
     const now = new Date().toISOString();
     const history = Array.isArray(order.status_history) ? order.status_history : [];
-    const { error } = await supabase.from('orders').update({ order_status: status, status_history: [...history, { status, timestamp: now, noteFR: `Statut livreur : ${status}`, noteEN: `Driver status: ${status}` }], delivered_at: status === 'delivered' ? now : null }).eq('id', req.params.id).eq('driver_id', driver.id);
+    const isAccepting = order.order_status === 'assigned' && status === 'picked_up';
+    const nextDriver = {
+      ...(order.driver || {}),
+      id: driver.id,
+      name: driver.full_name,
+      phone: driver.phone,
+      photoUrl: driver.photo_url || '',
+      rating: Number(driver.rating || 5),
+      totalDeliveries: Number(driver.total_deliveries || 0),
+      vehicleType: driver.vehicle_type || 'Moto',
+      vehiclePlate: driver.vehicle_plate || ''
+    };
+    const { error } = await supabase.from('orders').update({
+      order_status: status,
+      driver: nextDriver,
+      status_history: [...history, { status, timestamp: now, noteFR: isAccepting ? `Commande acceptée par ${driver.full_name}.` : `Statut livreur : ${status}`, noteEN: isAccepting ? `Order accepted by ${driver.full_name}.` : `Driver status: ${status}` }],
+      delivered_at: status === 'delivered' ? now : null
+    }).eq('id', req.params.id).eq('driver_id', driver.id);
     if (error) return res.status(400).json({ ok: false, error: error.message });
+
+    let notificationSent = false;
+    if (isAccepting && typeof notifyAdmin === 'function') {
+      notificationSent = await notifyAdmin({
+        ...order,
+        driver: nextDriver,
+        order_status: status,
+        status_history: [...history, { status, timestamp: now }]
+      }, 'driver_accepted');
+    }
     if (status === 'delivered') await supabase.from('drivers').update({ total_deliveries: Number(driver.total_deliveries || 0) + 1 }).eq('id', driver.id);
-    res.json({ ok: true });
+    res.json({ ok: true, notificationSent });
   });
 
   app.post('/api/driver/location', async (req, res) => {
@@ -119,13 +159,13 @@ export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateA
     const orderId = String(req.body?.orderId || '').trim();
     const lat = Number(req.body?.lat); const lng = Number(req.body?.lng); const accuracy = Number(req.body?.accuracy || 0);
     if (!orderId || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return res.status(400).json({ ok: false, error: 'Invalid driver location.' });
-    const { data: order } = await supabase.from('orders').select('driver').eq('id', orderId).eq('driver_id', driver.id).single();
+    const { data: order } = await supabase.from('orders').select('driver,order_status').eq('id', orderId).eq('driver_id', driver.id).single();
     if (!order) return res.status(403).json({ ok: false, error: 'Order not assigned to this driver.' });
     const current = order.driver || {};
     const nextDriver = { ...current, id: driver.id, name: driver.full_name, phone: driver.phone, photoUrl: driver.photo_url || '', rating: Number(driver.rating || 5), totalDeliveries: Number(driver.total_deliveries || 0), vehicleType: driver.vehicle_type || 'Moto', vehiclePlate: driver.vehicle_plate || '', currentLat: lat, currentLng: lng, lastLocationAt: new Date().toISOString(), locationAccuracy: accuracy };
     const { error } = await supabase.from('orders').update({ driver: nextDriver }).eq('id', orderId).eq('driver_id', driver.id);
     if (error) return res.status(400).json({ ok: false, error: error.message });
-    res.json({ ok: true, lat, lng, accuracy });
+    res.json({ ok: true, lat, lng, accuracy, status: order.order_status });
   });
 
   app.get('/api/admin/drivers', async (req, res) => {
