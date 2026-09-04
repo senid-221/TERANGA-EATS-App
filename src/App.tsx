@@ -9,6 +9,7 @@ import { OrderConfirmationScreen } from './components/screens/OrderConfirmationS
 import { OrderTrackingScreen } from './components/screens/OrderTrackingScreen';
 import { DriverScreen } from './components/screens/DriverScreen';
 import { AdminGate } from './components/auth/AdminGate';
+import { WhatsAppAIHelper } from './components/WhatsAppAIHelper';
 
 const MainAppContent: React.FC = () => {
   const { activeScreen, setActiveScreen, selectedOrderId, orders } = useApp();
@@ -26,7 +27,12 @@ const MainAppContent: React.FC = () => {
     const trackedOrder = orders.find(order => order.id === confirmationOrderId);
     if (trackedOrder) return <OrderTrackingScreen orderId={confirmationOrderId} onBack={() => setActiveScreen('confirmation')} />;
   }
-  return <ProductsScreen onOpenCart={() => setActiveScreen('cart')} />;
+  return (
+    <>
+      <ProductsScreen onOpenCart={() => setActiveScreen('cart')} />
+      <WhatsAppAIHelper />
+    </>
+  );
 };
 
 export default function App() {
