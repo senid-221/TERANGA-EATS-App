@@ -62,6 +62,20 @@ app.put('/api/admin/products/:id', async(req,res)=>{ if(!authenticateAdmin(req,r
 app.delete('/api/admin/products/:id', async(req,res)=>{ if(!authenticateAdmin(req,res))return; if(!supabase)return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'}); const {error}=await supabase.from('products').delete().eq('id',req.params.id); if(error)return res.status(400).json({ok:false,error:error.message}); res.json({ok:true}); });
 app.patch('/api/admin/orders/:id/status', async(req,res)=>{ if(!authenticateAdmin(req,res))return; if(!supabase)return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'}); const {status,noteFR,noteEN}=req.body||{}; if(!allowedStatuses.has(status))return res.status(400).json({ok:false,error:'Invalid order status.'}); const {data:current,error:readError}=await supabase.from('orders').select('status_history').eq('id',req.params.id).single(); if(readError)return res.status(404).json({ok:false,error:'Order not found.'}); const history=Array.isArray(current?.status_history)?current.status_history:[]; const now=new Date().toISOString(); const {error}=await supabase.from('orders').update({order_status:status,status_history:[...history,{status,timestamp:now,noteFR:noteFR||`Statut : ${status}`,noteEN:noteEN||`Status: ${status}`}],delivered_at:status==='delivered'?now:null}).eq('id',req.params.id); if(error)return res.status(400).json({ok:false,error:error.message}); res.json({ok:true}); });
 
+// Customer order tracking: requires the order ID plus the phone number entered at checkout.
+// This avoids exposing arbitrary orders while allowing guests to see admin status changes.
+app.post('/api/orders/status', async (req,res) => {
+  if (!supabase) return res.status(503).json({ ok:false, error:'Supabase server credentials are not configured.' });
+  const id = String(req.body?.orderId || '').trim();
+  const phone = String(req.body?.phone || '').replace(/\D/g, '');
+  if (!id || !phone) return res.status(400).json({ ok:false, error:'Order ID and phone are required.' });
+  const { data, error } = await supabase.from('orders').select('*').eq('id', id).single();
+  if (error || !data) return res.status(404).json({ ok:false, error:'Order not found.' });
+  const storedPhone = String(data.customer_phone || data.delivery_address?.phone || '').replace(/\D/g, '');
+  if (!storedPhone || storedPhone !== phone) return res.status(403).json({ ok:false, error:'Order verification failed.' });
+  res.json({ ok:true, order:orderForAdmin(data) });
+});
+
 const money=(n)=>`${new Intl.NumberFormat('fr-FR').format(Math.round(Number(n)||0))} FCFA`;
 const mapsLink=(a={})=>typeof a.lat==='number'&&typeof a.lng==='number'?`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.lat},${a.lng}`)}`:`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([a.streetAddress,a.buildingInfo,a.neighborhood].filter(Boolean).join(', ')||'Rwanda')}`;
 const notifyWhatsApp=async(order)=>{
