@@ -11,10 +11,20 @@ const SUPABASE_PROJECT_URL = (() => {
   return match ? `https://supabase.com/dashboard/project/${match[1]}` : '';
 })();
 
-class AdminDashboardErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: React.ReactNode }) { super(props); this.state = { hasError: false }; }
-  static getDerivedStateFromError(): { hasError: boolean } { return { hasError: true }; }
-  componentDidCatch(error: Error, info: ErrorInfo): void { console.error('Admin dashboard render error:', error, info); }
+type ErrorBoundaryProps = { children: React.ReactNode };
+type ErrorBoundaryState = { hasError: boolean };
+
+class AdminDashboardErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error('Admin dashboard render error:', error, info);
+  }
+
   render(): React.ReactNode {
     if (!this.state.hasError) return this.props.children;
     return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white"><div className="w-full max-w-lg rounded-2xl border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl"><AlertTriangle className="mx-auto mb-4 h-10 w-10 text-red-400"/><h1 className="text-xl font-bold">Admin Dashboard could not be loaded</h1><p className="mt-2 text-sm text-slate-400">Please refresh the page and try again.</p><button onClick={() => window.location.reload()} className="mt-6 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950">Refresh Dashboard</button></div></div>;
