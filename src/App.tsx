@@ -7,7 +7,7 @@ import { CartScreen } from './components/screens/CartScreen';
 import { CheckoutScreen } from './components/screens/CheckoutScreen';
 import { OrderConfirmationScreen } from './components/screens/OrderConfirmationScreen';
 import { OrderTrackingScreen } from './components/screens/OrderTrackingScreen';
-import { DriverLocationScreen } from './components/screens/DriverLocationScreen';
+import { DriverScreen } from './components/screens/DriverScreen';
 import { AdminGate } from './components/auth/AdminGate';
 
 const MainAppContent: React.FC = () => {
@@ -16,14 +16,14 @@ const MainAppContent: React.FC = () => {
   const path = window.location.pathname.replace(/\/$/, '');
 
   if (path === '/admin') return <AdminGate />;
-  if (path === '/driver') return <DriverLocationScreen />;
+  if (path === '/driver') return <DriverScreen />;
   if (activeScreen === 'splash') return <SplashScreen />;
   if (activeScreen === 'language') return <LanguageScreen />;
   if (activeScreen === 'cart') return <CartScreen onProceedToCheckout={() => setActiveScreen('checkout')} />;
   if (activeScreen === 'checkout') return <CheckoutScreen onBack={() => setActiveScreen('cart')} onOrderSuccess={(id) => { setConfirmationOrderId(id); setActiveScreen('confirmation'); }} />;
   if (activeScreen === 'confirmation' && confirmationOrderId) return <OrderConfirmationScreen orderId={confirmationOrderId} onTrackOrder={() => setActiveScreen('tracking')} onBackHome={() => setActiveScreen('products')} />;
   if (activeScreen === 'tracking' && confirmationOrderId) {
-    const trackedOrder = orders.find((order) => order.id === confirmationOrderId);
+    const trackedOrder = orders.find(order => order.id === confirmationOrderId);
     if (trackedOrder) return <OrderTrackingScreen orderId={confirmationOrderId} onBack={() => setActiveScreen('confirmation')} />;
   }
   return <ProductsScreen onOpenCart={() => setActiveScreen('cart')} />;
