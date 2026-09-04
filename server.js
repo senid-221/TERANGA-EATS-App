@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
@@ -42,4 +43,12 @@ app.post('/api/admin/notify-order',async(req,res)=>{if(!authenticateAdmin(req,re
 });
 app.post('/api/whatsapp/webhook',(req,res)=>{if(!verifyWasenderWebhook(req))return res.status(401).json({ok:false,error:'Invalid webhook signature.'});const payload=req.body||{};const event=String(payload.event||'unknown');console.log(`Wasender webhook: ${event}`);if(event==='session.status'){console.log('Wasender session status:',payload.data?.status||'unknown');}else if(event==='messages-personal.received'||event==='messages.upsert'){const message=payload.data?.messages||payload.data?.message||payload.data;const sender=message?.key?.remoteJid||message?.cleanedSenderPn||message?.from||'unknown';const text=message?.messageBody||message?.text||message?.content||'';console.log('WhatsApp incoming message:',{sender,text:event==='messages-personal.received'?text:'[message event]'});}else if(event==='message.sent'||event==='message-receipt.update'||event==='messages.update'){console.log('Wasender message update received.');}res.status(200).json({received:true});});
 registerDriverRoutes(app,supabase,SESSION_SECRET,authenticateAdmin,notifyWhatsApp);
-const distPath=path.join(process.cwd(),'dist');app.use(express.static(distPath));app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html')));app.listen(PORT,'0.0.0.0',()=>console.log(`TerangaEats server running on port ${PORT}`));
+
+// Resolve the production dist directory relative to this server file, not Hostinger's working directory.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.join(__dirname, 'dist');
+
+app.use(express.static(distPath));
+app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html')));
+app.listen(PORT,'0.0.0.0',()=>console.log(`TerangaEats server running on port ${PORT}; static files: ${distPath}`));
