@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 const DEVELOPER_WHATSAPP = '250726969060';
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_API_KEY = 'YOUR_OPENROUTER_API_KEY';
+const OPENROUTER_MODEL = 'openai/gpt-4o';
+const MEMORY_KEY = 'terangaeats_ai_helper_memory_v1';
 
 const whatsappIcon = (
   <svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7 fill-current">
@@ -9,11 +13,45 @@ const whatsappIcon = (
   </svg>
 );
 
+type ChatMessage = { role: 'user' | 'assistant'; text: string };
+
+const initialMessage: ChatMessage = {
+  role: 'assistant',
+  text: 'Muraho! 👋 Ndi TerangaEats Client Helper. Nakufasha kumenya menu, gutumiza, delivery, payment, cyangwa uko wavugana na team. Mbaza ikibazo cyawe.',
+};
+
+const SYSTEM_PROMPT = `You are TerangaEats Client Helper, the customer-support AI inside the TerangaEats food ordering app.
+
+Rules:
+- Give useful, natural, accurate answers. Do not make up facts.
+- Never invent product names, prices, discounts, delivery times, order status, payment confirmation, restaurant availability, addresses, or company policies.
+- If the conversation does not contain the information needed, clearly say that you do not have that information and direct the customer to the TerangaEats human team on WhatsApp.
+- Help with menu questions, how to order, checkout, delivery, payment methods, order tracking, and general app support.
+- If the customer asks in Kinyarwanda, answer in natural Kinyarwanda. If French, answer in French. If English, answer in English. Keep the language consistent with the customer.
+- Be polite, concise, practical, and friendly.
+- Remember the conversation history supplied in the messages and use it to avoid asking for information the customer already provided.
+- Do not claim that you performed an action in the app unless the conversation explicitly confirms it.
+- If a human is needed, say so and recommend the WhatsApp Team button.`;
+
+const loadMemory = (): ChatMessage[] => {
+  try {
+    const raw = localStorage.getItem(MEMORY_KEY);
+    if (!raw) return [initialMessage];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [initialMessage];
+    const valid = parsed.filter(
+      (m): m is ChatMessage =>
+        !!m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string'
+    );
+    return valid.length ? valid.slice(-40) : [initialMessage];
+  } catch {
+    return [initialMessage];
+  }
+};
+
 export const WhatsAppAIHelper: React.FC = () => {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([
-    { role: 'assistant', text: 'Muraho! 👋 Ndi TerangaEats Client Helper. Nakufasha kumenya menu, gutumiza, delivery, cyangwa uko wavugana na team.' },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(loadMemory);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -22,27 +60,76 @@ export const WhatsAppAIHelper: React.FC = () => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(MEMORY_KEY, JSON.stringify(messages.slice(-40)));
+    } catch {
+      // Memory is best-effort if browser storage is unavailable.
+    }
+  }, [messages]);
+
   const send = async () => {
     const text = input.trim();
     if (!text || loading) return;
+
+    const userMessage: ChatMessage = { role: 'user', text };
+    const conversation = [...messages, userMessage];
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', text }]);
+    setMessages(conversation);
     setLoading(true);
+
     try {
-      const response = await fetch('/api/ai-help', {
+      if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY === 'YOUR_OPENROUTER_API_KEY') {
+        throw new Error('OpenRouter API key is not configured in WhatsAppAIHelper.tsx');
+      }
+
+      const response = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': window.location.origin || 'https://citymarketbusiness.com',
+          'X-Title': 'TerangaEats',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: OPENROUTER_MODEL,
+          temperature: 0.2,
+          max_tokens: 700,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            ...conversation.slice(-30).map(m => ({ role: m.role, content: m.text })),
+          ],
+        }),
       });
+
       const data = await response.json().catch(() => ({}));
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        text: data?.reply || 'Ntabwo nabashije kubona igisubizo ubu. Ushobora gukomeza kuri WhatsApp yacu.',
-      }]);
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Hari ikibazo cya connection. Kanda WhatsApp uvugane na team yacu.' }]);
+      const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+
+      if (!response.ok || !reply) {
+        throw new Error(String(data?.error?.message || `OpenRouter request failed (${response.status})`));
+      }
+
+      setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
+    } catch (error) {
+      console.warn('OpenRouter AI Helper failed:', error);
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: 'Mbabarira, AI ntiyabashije gusubiza ubu. Niba ikibazo cyawe ari ingenzi, kanda kuri WhatsApp Team uvugane n’umuntu wacu.',
+        },
+      ]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const clearMemory = () => {
+    setMessages([initialMessage]);
+    try {
+      localStorage.removeItem(MEMORY_KEY);
+    } catch {
+      // Ignore storage errors.
     }
   };
 
@@ -60,7 +147,7 @@ export const WhatsAppAIHelper: React.FC = () => {
               <div className="rounded-full bg-white/15 p-2">{whatsappIcon}</div>
               <div>
                 <div className="font-bold">TerangaEats AI Helper</div>
-                <div className="text-xs text-white/75">Online • Client support</div>
+                <div className="text-xs text-white/75">AI Client Support • OpenRouter</div>
               </div>
             </div>
             <button onClick={() => setOpen(false)} className="rounded-full px-2 py-1 text-xl" aria-label="Close">×</button>
@@ -68,7 +155,7 @@ export const WhatsAppAIHelper: React.FC = () => {
 
           <div className="max-h-[52vh] min-h-[250px] space-y-3 overflow-y-auto bg-[#f7f7f7] p-4">
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={`${m.role}-${i}`} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[82%] rounded-2xl px-3 py-2 text-sm ${m.role === 'user' ? 'rounded-br-sm bg-[#DCF8C6] text-slate-800' : 'rounded-bl-sm bg-white text-slate-700 shadow-sm'}`}>
                   {m.text}
                 </div>
@@ -88,6 +175,10 @@ export const WhatsAppAIHelper: React.FC = () => {
                 className="min-w-0 flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-[#25D366]"
               />
               <button onClick={send} disabled={loading || !input.trim()} className="rounded-2xl bg-[#25D366] px-4 font-bold text-white disabled:opacity-40">Send</button>
+            </div>
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="text-[11px] text-slate-400">Conversation iribukwa kuri iyi device</span>
+              <button onClick={clearMemory} className="text-[11px] font-semibold text-slate-500 hover:text-slate-800">Clear memory</button>
             </div>
             <button onClick={openDeveloperWhatsApp} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#075E54] px-4 py-3 text-sm font-bold text-white">
               {whatsappIcon} Vugana na TerangaEats Team kuri WhatsApp
