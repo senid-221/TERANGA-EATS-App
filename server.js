@@ -40,7 +40,8 @@ const normalizeWhatsAppNumber=(value)=>{const digits=String(value||'').replace(/
 const WASENDER_API_URL=String(process.env.WASENDER_API_URL||'https://www.wasenderapi.com').replace(/\/$/,'');
 const verifyWasenderWebhook=(req)=>{const signature=String(req.headers['x-webhook-signature']||'').trim();const secret=String(process.env.WASENDER_WEBHOOK_SECRET||'').trim();if(!signature||!secret)return false;return signature===secret;};
 const notifyWhatsApp=async(order,event='new_order')=>{const apiKey=String(process.env.WASENDER_API_KEY||'').trim();const adminNumber=normalizeWhatsAppNumber(process.env.WASENDER_ADMIN_NUMBER||'');if(!apiKey||!adminNumber)return false;const items=(order.items||[]).map(i=>`• ${i.quantity||1} × ${i.nameFR||i.nameEN||'Produit'} — ${money(i.totalPrice??(i.unitPrice||0)*(i.quantity||1))}`).join('\n');const a=order.delivery_address||{};const email=order.customer_email||a.email||'';const address=[a.neighborhood,a.streetAddress,a.buildingInfo].filter(Boolean).join(', ')||'Adresse non précisée';const driver=order.driver||{};const heading=event==='driver_accepted'?'🚦 *DRIVER A ACCEPTÉ LA COMMANDE*':'🛎️ *NOUVELLE COMMANDE — TERANGAEATS*';const body=[heading,`🆔 Commande : *${order.id}*`,`👤 Client : *${order.customer_name}*`,`📱 WhatsApp/Tél : *${order.customer_phone}*`,email?`✉️ Email : ${email}`:'','', '🛒 *Produits :*',items||'• Aucun produit','',`💰 *TOTAL : ${money(order.total)}*`,`💳 Paiement : ${order.payment_method||'cash_on_delivery'}`,`📍 Livraison : ${address}`,`🗺️ *Google Maps :* ${mapsLink(a)}`,event==='driver_accepted'?`🏍️ Driver : *${driver.name||'Livreur'}*`:''].filter(Boolean).join('\n');try{const r=await fetch(`${WASENDER_API_URL}/api/send-message`,{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({to:adminNumber,text:body})});if(!r.ok){console.warn('WasenderAPI notification failed:',r.status,await r.text().catch(()=>''));return false;}const result=await r.json().catch(()=>null);return result?.success!==false;}catch(error){console.warn('WasenderAPI request failed:',error);return false;}};
-app.post('/api/orders/notify',async(req,res)=>{if(!supabase)return res.status(503).json({ok:false,notificationSent:false,reason:'Supabase server credentials are not configured.'});const id=String(req.body?.orderId||'').trim();if(!id)return res.status(400).json({ok:false,notificationSent:false,reason:'Order ID is required.'});const {data,error}=await supabase.from('orders').select('*').eq('id',id).single();if(error||!data)return res.status(404).json({ok:false,notificationSent:false,reason:'Order not found.'});const sent=await notifyWhatsApp(data);return res.status(sent?200:202).json({ok:true,notificationSent:sent,reason:sent?undefined:'WhatsApp is not configured or rejected the message.'});});
+app.post('/api/orders/notify',async(req,res)=>{if(!supabase)return res.status(503).json({ok:false,notificationSent:false,reason:'Supabase server credentials are not configured.'});const id=String(req.body?.orderId||'').trim();if(!id)return res.status(400).json({ok:false,notificationSent:false,reason:'Order ID is required.'});const {data,error}=await supabase.from('orders').select('*').eq('id',id).single();if(error||!data)return res.status(404).json({ok:false,notificationSent:false,reason:'Order not found.'});const sent=await notifyWhatsApp(data);return res.status(sent?200:202).json({ok:true,notificationSent:sent,reason:sent?undefined:'WhatsApp is not configured or rejected the message.'});
+});
 app.post('/api/admin/notify-order',async(req,res)=>{if(!authenticateAdmin(req,res))return;if(!supabase)return res.status(503).json({ok:false,notificationSent:false,reason:'Supabase server credentials are not configured.'});const id=String(req.body?.orderId||'').trim();if(!id)return res.status(400).json({ok:false,notificationSent:false,reason:'Order ID is required.'});const {data,error}=await supabase.from('orders').select('*').eq('id',id).single();if(error||!data)return res.status(404).json({ok:false,notificationSent:false,reason:'Order not found.'});const sent=await notifyWhatsApp(data);res.status(sent?200:202).json({ok:true,notificationSent:sent,reason:sent?undefined:'WhatsApp is not configured or rejected the message.'});
 });
 app.post('/api/whatsapp/webhook',(req,res)=>{if(!verifyWasenderWebhook(req))return res.status(401).json({ok:false,error:'Invalid webhook signature.'});const payload=req.body||{};const event=String(payload.event||'unknown');console.log(`Wasender webhook: ${event}`);if(event==='session.status'){console.log('Wasender session status:',payload.data?.status||'unknown');}else if(event==='messages-personal.received'||event==='messages.upsert'){const message=payload.data?.messages||payload.data?.message||payload.data;const sender=message?.key?.remoteJid||message?.cleanedSenderPn||message?.from||'unknown';const text=message?.messageBody||message?.text||message?.content||'';console.log('WhatsApp incoming message:',{sender,text:event==='messages-personal.received'?text:'[message event]'});}else if(event==='message.sent'||event==='message-receipt.update'||event==='messages.update'){console.log('Wasender message update received.');}res.status(200).json({received:true});});
@@ -51,8 +52,6 @@ const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
 const esbuildBin = path.join(__dirname, 'node_modules', '@esbuild', 'linux-x64', 'bin', 'esbuild');
 
-// Hostinger can unpack node_modules with esbuild's executable bit missing.
-// Restore execute permission before Vite starts, preventing EACCES during config loading.
 if (existsSync(esbuildBin)) {
   try {
     chmodSync(esbuildBin, 0o755);
@@ -67,11 +66,7 @@ if (!existsSync(path.join(distPath, 'index.html'))) {
   try {
     const viteCli = path.join(__dirname, 'node_modules', 'vite', 'bin', 'vite.js');
     if (!existsSync(viteCli)) throw new Error(`Vite CLI not found: ${viteCli}`);
-    execFileSync(process.execPath, [viteCli, 'build'], {
-      cwd: __dirname,
-      stdio: 'inherit',
-      env: process.env,
-    });
+    execFileSync(process.execPath, [viteCli, 'build'], { cwd: __dirname, stdio: 'inherit', env: process.env });
   } catch (error) {
     console.error('Production build failed:', error);
     process.exit(1);
