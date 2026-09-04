@@ -24,18 +24,4 @@ alter table public.orders add column if not exists driver_id text;
 create index if not exists orders_driver_id_idx on public.orders(driver_id);
 
 alter table public.drivers enable row level security;
-
-create or replace function public.set_driver_on_order_assignment()
-returns trigger language plpgsql as $$
-begin
-  if new.driver_id is not null then
-    new.order_status = case when new.order_status in ('pending','accepted','preparing','ready') then 'assigned' else new.order_status end;
-    new.driver = jsonb_build_object('id', new.driver_id);
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists orders_driver_assignment on public.orders;
-create trigger orders_driver_assignment before update of driver_id on public.orders
-for each row execute function public.set_driver_on_order_assignment();
+-- Driver records remain server-only; do not add public SELECT policies.
