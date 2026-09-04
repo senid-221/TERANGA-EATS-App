@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import { existsSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
 import { registerDriverRoutes } from './server/driverRoutes.js';
@@ -48,6 +50,27 @@ registerDriverRoutes(app,supabase,SESSION_SECRET,authenticateAdmin,notifyWhatsAp
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
+
+// Hostinger can start the Node process directly instead of running the configured build command.
+// If Vite has not produced dist/index.html yet, build once before starting the server.
+if (!existsSync(path.join(distPath, 'index.html'))) {
+  console.log('Production build missing; running npm run build before serving.');
+  try {
+    execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
+      cwd: __dirname,
+      stdio: 'inherit',
+      env: process.env,
+    });
+  } catch (error) {
+    console.error('Production build failed:', error);
+    process.exit(1);
+  }
+}
+
+if (!existsSync(path.join(distPath, 'index.html'))) {
+  console.error(`Production build completed but dist/index.html is still missing: ${distPath}`);
+  process.exit(1);
+}
 
 app.use(express.static(distPath));
 app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html')));
