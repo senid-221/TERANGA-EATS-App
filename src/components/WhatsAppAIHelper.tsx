@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 
 const DEVELOPER_WHATSAPP = '250726969060';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = 'YOUR_OPENROUTER_API_KEY';
+const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY || '';
 const OPENROUTER_MODEL = 'openai/gpt-4o';
 const MEMORY_KEY = 'terangaeats_ai_helper_memory_v1';
 
@@ -79,8 +79,8 @@ export const WhatsAppAIHelper: React.FC = () => {
     setLoading(true);
 
     try {
-      if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY === 'YOUR_OPENROUTER_API_KEY') {
-        throw new Error('OpenRouter API key is not configured in WhatsAppAIHelper.tsx');
+      if (!OPENROUTER_API_KEY) {
+        throw new Error('VITE_OPENROUTER_API_KEY is not configured');
       }
 
       const response = await fetch(OPENROUTER_API_URL, {
