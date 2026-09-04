@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ShieldAlert, Loader2, LogIn } from 'lucide-react';
 import { AdminDashboardScreen } from '../screens/AdminDashboardScreen';
 import { DriverAssignmentPanel } from '../admin/DriverAssignmentPanel';
+import { AdminLiveMap } from '../admin/AdminLiveMap';
 import { useApp } from '../../context/AppContext';
 
 const AdminDashboardBridge: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
@@ -17,7 +18,7 @@ const AdminDashboardBridge: React.FC<{ onLogout: () => void }> = ({ onLogout }) 
     };
     document.addEventListener('click', handleClick, true); return () => document.removeEventListener('click', handleClick, true);
   }, [syncData, showToast, onLogout]);
-  return <><AdminDashboardScreen /><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-28"><DriverAssignmentPanel orders={orders} /></div></>;
+  return <><AdminDashboardScreen /><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-8"><DriverAssignmentPanel orders={orders} /></div><div className="max-w-7xl mx-auto px-4 sm:px-6 pb-28"><AdminLiveMap /></div></>;
 };
 
 export const AdminGate: React.FC = () => {
