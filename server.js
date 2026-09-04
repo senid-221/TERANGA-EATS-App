@@ -51,12 +51,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
 
-// Hostinger can start the Node process directly instead of running the configured build command.
-// If Vite has not produced dist/index.html yet, build once before starting the server.
+// Some Hostinger Node deployments launch the server without exposing the npm executable
+// in PATH. Build directly through the Node executable and Vite's local CLI instead of npm.
 if (!existsSync(path.join(distPath, 'index.html'))) {
-  console.log('Production build missing; running npm run build before serving.');
+  console.log('Production build missing; running Vite build before serving.');
   try {
-    execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
+    const viteCli = path.join(__dirname, 'node_modules', 'vite', 'bin', 'vite.js');
+    if (!existsSync(viteCli)) throw new Error(`Vite CLI not found: ${viteCli}`);
+    execFileSync(process.execPath, [viteCli, 'build'], {
       cwd: __dirname,
       stdio: 'inherit',
       env: process.env,
