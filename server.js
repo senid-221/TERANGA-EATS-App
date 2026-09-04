@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { existsSync, chmodSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
+import { GoogleGenAI } from '@google/genai';
 import 'dotenv/config';
 import { registerDriverRoutes } from './server/driverRoutes.js';
 
@@ -34,6 +35,30 @@ app.put('/api/admin/products/:id',async(req,res)=>{if(!authenticateAdmin(req,res
 app.delete('/api/admin/products/:id',async(req,res)=>{if(!authenticateAdmin(req,res))return;if(!supabase)return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});const {error}=await supabase.from('products').delete().eq('id',req.params.id);if(error)return res.status(400).json({ok:false,error:error.message});res.json({ok:true});});
 app.patch('/api/admin/orders/:id/status',async(req,res)=>{if(!authenticateAdmin(req,res))return;if(!supabase)return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});const {status,noteFR,noteEN}=req.body||{};if(!allowedStatuses.has(status))return res.status(400).json({ok:false,error:'Invalid order status.'});const {data:current,error:readError}=await supabase.from('orders').select('status_history').eq('id',req.params.id).single();if(readError)return res.status(404).json({ok:false,error:'Order not found.'});const history=Array.isArray(current?.status_history)?current.status_history:[];const now=new Date().toISOString();const {error}=await supabase.from('orders').update({order_status:status,status_history:[...history,{status,timestamp:now,noteFR:noteFR||`Statut : ${status}`,noteEN:noteEN||`Status: ${status}`}],delivered_at:status==='delivered'?now:null}).eq('id',req.params.id);if(error)return res.status(400).json({ok:false,error:error.message});res.json({ok:true});});
 app.post('/api/orders/status',async(req,res)=>{if(!supabase)return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});const id=String(req.body?.orderId||'').trim();const phone=String(req.body?.phone||'').replace(/\D/g,'');if(!id||!phone)return res.status(400).json({ok:false,error:'Order ID and phone are required.'});const {data,error}=await supabase.from('orders').select('*').eq('id',id).single();if(error||!data)return res.status(404).json({ok:false,error:'Order not found.'});const storedPhone=String(data.customer_phone||data.delivery_address?.phone||'').replace(/\D/g,'');if(!storedPhone||storedPhone!==phone)return res.status(403).json({ok:false,error:'Order verification failed.'});res.json({ok:true,order:orderForAdmin(data)});});
+
+// AI Client Helper: Gemini is server-side only; customers never receive the API key.
+app.post('/api/ai-help',async(req,res)=>{
+  const message=String(req.body?.message||'').trim();
+  if(!message)return res.status(400).json({ok:false,reply:'Andika ikibazo cyawe.'});
+  const apiKey=String(process.env.GEMINI_API_KEY||'').trim();
+  if(!apiKey)return res.status(503).json({ok:false,reply:'AI Helper ntabwo iraboneka ubu. Kanda WhatsApp uvugane na team yacu.'});
+  try{
+    const ai=new GoogleGenAI({apiKey});
+    const response=await ai.models.generateContent({
+      model:'gemini-2.5-flash',
+      contents:[{
+        role:'user',
+        parts:[{text:`You are TerangaEats Client Helper. Help customers politely and briefly with ordering food, menu/product questions, delivery, payment, order tracking, and general TerangaEats support. Do not invent prices, products, delivery times, order status, or policies. If the customer needs a human/developer, tell them to use the WhatsApp button. Reply in the customer's language when clear; otherwise use simple French. Customer message: ${message}`}]
+      }]
+    });
+    const reply=String(response?.text||'').trim()||'Nshobora kugufasha kuri menu, order, delivery cyangwa payment. Niba ukeneye umuntu, kanda WhatsApp Team.';
+    res.json({ok:true,reply});
+  }catch(error){
+    console.warn('Gemini AI helper failed:',error?.message||error);
+    res.status(200).json({ok:false,reply:'AI Helper yagize ikibazo gito. Kanda WhatsApp uvugane na team yacu.'});
+  }
+});
+
 const money=n=>`${new Intl.NumberFormat('fr-FR').format(Math.round(Number(n)||0))} FCFA`;
 const mapsLink=a=>typeof a?.lat==='number'&&typeof a?.lng==='number'?`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.lat},${a.lng}`)}`:`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([a?.streetAddress,a?.buildingInfo,a?.neighborhood].filter(Boolean).join(', ')||'Dakar')}`;
 const normalizeWhatsAppNumber=(value)=>{const digits=String(value||'').replace(/\D/g,'');return digits?`+${digits}`:'';};
