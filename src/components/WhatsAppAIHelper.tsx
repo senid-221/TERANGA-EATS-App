@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-const DEVELOPER_WHATSAPP = '25072696060';
+const DEVELOPER_WHATSAPP = '250726969060';
 
 const whatsappIcon = (
   <svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7 fill-current">
