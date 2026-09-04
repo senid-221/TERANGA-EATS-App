@@ -5,6 +5,12 @@ import { DriverAssignmentPanel } from '../admin/DriverAssignmentPanel';
 import { AdminLiveMap } from '../admin/AdminLiveMap';
 import { useApp } from '../../context/AppContext';
 
+const SUPABASE_PROJECT_URL = (() => {
+  const url = String((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SUPABASE_URL || '').trim();
+  const match = url.match(/^https:\/\/([a-z0-9-]+)\.supabase\.co\/?$/i);
+  return match ? `https://supabase.com/dashboard/project/${match[1]}` : '';
+})();
+
 class AdminDashboardErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
@@ -22,7 +28,16 @@ const AdminDashboardBridge: React.FC<{ onLogout: () => void }> = ({ onLogout }) 
       const target = event.target as HTMLElement | null; if (!target) return;
       const button = target.closest('button'); const label = button?.textContent?.replace(/\s+/g, ' ').trim();
       if (label === 'Actualiser DB') { event.preventDefault(); event.stopPropagation(); try { await syncData(); showToast('Base de données actualisée.'); } catch { showToast('Impossible d’actualiser la base de données.'); } return; }
-      if (label === 'Déconnexion') { event.preventDefault(); event.stopPropagation(); try { await fetch('/api/admin/logout', { method:'POST', credentials:'include' }); } finally { onLogout(); } return; }
+      if (label === 'Déconnexion') {
+        event.preventDefault(); event.stopPropagation();
+        try { await fetch('/api/admin/logout', { method:'POST', credentials:'include' }); }
+        finally { onLogout(); window.location.replace('/admin'); }
+        return;
+      }
+      const connectedBadge = Array.from(document.querySelectorAll('a, span')).find(node => node.textContent?.trim() === '● Supabase Connecté');
+      if (connectedBadge && connectedBadge.contains(target) && SUPABASE_PROJECT_URL) {
+        event.preventDefault(); event.stopPropagation(); window.open(SUPABASE_PROJECT_URL, '_blank', 'noopener,noreferrer'); return;
+      }
       const localBadge = Array.from(document.querySelectorAll('span')).find(node => node.textContent?.trim() === '● Base locale');
       if (localBadge && localBadge.contains(target)) { event.preventDefault(); event.stopPropagation(); showToast('Mode Base locale actif. Les données locales restent disponibles.'); }
     };
