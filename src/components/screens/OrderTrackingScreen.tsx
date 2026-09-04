@@ -17,7 +17,6 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({ orderI
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<{ id: string; sender: 'driver' | 'user'; text: string; time: string }[]>([]);
 
-  // Guests do not have an account, so the order ID + checkout phone securely identify the order.
   useEffect(() => {
     const phone = initialOrder?.customerPhone || initialOrder?.deliveryAddress?.phone || '';
     if (!phone) return;
@@ -27,13 +26,13 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({ orderI
         const response = await fetch('/api/orders/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId, phone }) });
         if (!response.ok) return;
         const result = await response.json();
-        if (!cancelled && result?.order) setOrder(result.order as Order);
-      } catch { /* keep the last known order state */ }
+        if (!cancelled && result?.order?.id === orderId) setOrder(result.order as Order);
+      } catch { /* keep last known state */ }
     };
     refresh();
-    const timer = window.setInterval(refresh, 5000);
+    const timer = window.setInterval(refresh, order?.orderStatus === 'delivering' || order?.orderStatus === 'driver_arrived' ? 2000 : 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [orderId, initialOrder?.customerPhone, initialOrder?.deliveryAddress?.phone]);
+  }, [orderId, initialOrder?.customerPhone, initialOrder?.deliveryAddress?.phone, order?.orderStatus]);
 
   useEffect(() => {
     if (!order?.driver) return;
@@ -47,6 +46,7 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({ orderI
   const matchedNeighborhood = DAKAR_NEIGHBORHOODS.find((n) => n.name.toLowerCase() === neighborhood.toLowerCase() || neighborhood.toLowerCase().includes(n.id));
   const restaurantData = { name: order.restaurantName, latitude: restObj?.latitude || 14.6708, longitude: restObj?.longitude || -17.4381, address: order.restaurantAddress, logoUrl: order.restaurantLogo };
   const deliveryData = { neighborhood, street: order.deliveryAddress.streetAddress, latitude: order.deliveryAddress.lat || matchedNeighborhood?.lat || 14.7118, longitude: order.deliveryAddress.lng || matchedNeighborhood?.lng || -17.4699 };
+  const hasLiveGps = Number.isFinite(order.driver?.currentLat) && Number.isFinite(order.driver?.currentLng) && Boolean(order.driver?.lastLocationAt);
   const handleCallDriver = () => { if (order.driver?.phone) window.location.href = `tel:${order.driver.phone}`; };
   const handleSendMessage = (e: React.FormEvent) => { e.preventDefault(); if (!inputText.trim()) return; setMessages((p) => [...p, { id: String(Date.now()), sender: 'user', text: inputText.trim(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]); setInputText(''); };
 
@@ -62,9 +62,10 @@ export const OrderTrackingScreen: React.FC<OrderTrackingScreenProps> = ({ orderI
 
       <div className="px-4 sm:px-6"><div className="bg-white rounded-[32px] p-5 sm:p-6 border border-[#F0EDE8] shadow-artistic">
         <div className="flex items-center justify-between mb-4"><div><span className="text-xs font-bold text-[#006633] uppercase tracking-wider">{t('estimatedArrival')}</span><h3 className="font-heading font-black text-xl text-[#2D2D2D]">{order.estimatedDeliveryTime}</h3></div><span className="px-3 py-1 rounded-full bg-emerald-50 text-[#006633] text-xs font-black border border-emerald-200 uppercase">{order.orderStatus}</span></div>
+        {order.driver && (order.orderStatus === 'delivering' || order.orderStatus === 'driver_arrived') && <div className={`mb-4 p-3.5 rounded-2xl border flex items-center gap-2 ${hasLiveGps ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}><MapPin className="w-5 h-5" /><div><p className="text-xs font-black">{hasLiveGps ? (language === 'fr' ? 'GPS du livreur en direct' : 'Driver GPS is live') : (language === 'fr' ? 'GPS du livreur en attente…' : 'Waiting for driver GPS…')}</p><p className="text-[10px] font-medium opacity-75">{hasLiveGps ? (language === 'fr' ? 'La position est actualisée automatiquement.' : 'Location updates automatically.') : (language === 'fr' ? 'Le livreur doit activer son GPS.' : 'The driver must enable GPS.')}</p></div></div>}
         {order.orderStatus === 'driver_arrived' && <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 border-2 border-amber-300 flex items-center justify-between gap-2 animate-pulse"><div className="flex items-center gap-2"><MapPin className="w-5 h-5 text-emerald-600" /><p className="text-xs font-black">{language === 'fr' ? 'Le livreur est arrivé à votre adresse.' : 'The courier has arrived at your address.'}</p></div>{order.driver?.phone && <button onClick={handleCallDriver} className="px-3 py-1 bg-amber-400 text-slate-900 font-black text-xs rounded-xl">Appeler</button>}</div>}
         <OrderStatusTimeline currentStatus={order.orderStatus} />
-        <p className="mt-4 text-[10px] text-gray-400 font-medium">{language === 'fr' ? 'Le statut est actualisé automatiquement toutes les 5 secondes.' : 'Status updates automatically every 5 seconds.'}</p>
+        <p className="mt-4 text-[10px] text-gray-400 font-medium">{language === 'fr' ? 'Statut toutes les 5 s. GPS toutes les 2 s. pendant la livraison.' : 'Status every 5s. GPS every 2s. during delivery.'}</p>
       </div></div>
 
       {order.driver && <div className="px-4 sm:px-6"><div className="bg-white rounded-[32px] p-5 border border-[#F0EDE8] shadow-artistic flex items-center justify-between gap-3"><div className="flex items-center gap-3"><div className="relative w-14 h-14 rounded-2xl overflow-hidden bg-gray-100 shrink-0"><img src={order.driver.photoUrl} alt={order.driver.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" /></div><div><div className="flex items-center gap-1.5"><h4 className="font-bold text-sm">{order.driver.name}</h4><span className="text-[10px] font-black bg-amber-50 text-amber-900 border border-amber-200 px-1.5 py-0.5 rounded-md">★ {order.driver.rating}</span></div><p className="text-xs text-gray-500 mt-0.5">{order.driver.vehicleType} • {order.driver.vehiclePlate}</p><p className="text-[10px] text-[#006633] font-bold">Livreur vérifié Teranga</p></div></div><div className="flex items-center gap-2"><button onClick={() => setShowChatModal(true)} className="w-11 h-11 rounded-2xl bg-emerald-50 text-[#006633] flex items-center justify-center border border-emerald-200"><MessageSquare className="w-5 h-5" /></button>{order.driver.phone && <button onClick={handleCallDriver} className="w-11 h-11 rounded-2xl bg-[#006633] text-white flex items-center justify-center"><Phone className="w-5 h-5" /></button>}</div></div></div>}
