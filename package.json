@@ -10,7 +10,8 @@
     "start": "node server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "postinstall": "node scripts/prepare-build.cjs && vite build"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.10",
