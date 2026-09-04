@@ -10,7 +10,7 @@ import { OrderTrackingScreen } from './components/screens/OrderTrackingScreen';
 import { AdminGate } from './components/auth/AdminGate';
 
 const MainAppContent: React.FC = () => {
-  const { activeScreen, setActiveScreen, selectedOrderId, orders, language } = useApp();
+  const { activeScreen, setActiveScreen, selectedOrderId, orders } = useApp();
   const [confirmationOrderId, setConfirmationOrderId] = useState<string | null>(selectedOrderId);
 
   if (window.location.pathname.replace(/\/$/, '') === '/admin') return <AdminGate />;
