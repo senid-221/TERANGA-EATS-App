@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
-import { existsSync } from 'fs';
+import { existsSync, chmodSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
@@ -46,13 +46,22 @@ app.post('/api/admin/notify-order',async(req,res)=>{if(!authenticateAdmin(req,re
 app.post('/api/whatsapp/webhook',(req,res)=>{if(!verifyWasenderWebhook(req))return res.status(401).json({ok:false,error:'Invalid webhook signature.'});const payload=req.body||{};const event=String(payload.event||'unknown');console.log(`Wasender webhook: ${event}`);if(event==='session.status'){console.log('Wasender session status:',payload.data?.status||'unknown');}else if(event==='messages-personal.received'||event==='messages.upsert'){const message=payload.data?.messages||payload.data?.message||payload.data;const sender=message?.key?.remoteJid||message?.cleanedSenderPn||message?.from||'unknown';const text=message?.messageBody||message?.text||message?.content||'';console.log('WhatsApp incoming message:',{sender,text:event==='messages-personal.received'?text:'[message event]'});}else if(event==='message.sent'||event==='message-receipt.update'||event==='messages.update'){console.log('Wasender message update received.');}res.status(200).json({received:true});});
 registerDriverRoutes(app,supabase,SESSION_SECRET,authenticateAdmin,notifyWhatsApp);
 
-// Resolve the production dist directory relative to this server file, not Hostinger's working directory.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
+const esbuildBin = path.join(__dirname, 'node_modules', '@esbuild', 'linux-x64', 'bin', 'esbuild');
 
-// Some Hostinger Node deployments launch the server without exposing the npm executable
-// in PATH. Build directly through the Node executable and Vite's local CLI instead of npm.
+// Hostinger can unpack node_modules with esbuild's executable bit missing.
+// Restore execute permission before Vite starts, preventing EACCES during config loading.
+if (existsSync(esbuildBin)) {
+  try {
+    chmodSync(esbuildBin, 0o755);
+    console.log('Prepared esbuild executable for production build.');
+  } catch (error) {
+    console.warn('Could not chmod esbuild executable:', error);
+  }
+}
+
 if (!existsSync(path.join(distPath, 'index.html'))) {
   console.log('Production build missing; running Vite build before serving.');
   try {
