@@ -7,8 +7,6 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "postinstall": "npm run build",
-    "prestart": "npm run build",
     "start": "node server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
