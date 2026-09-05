@@ -138,9 +138,7 @@ export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateA
     if (error || !updated) return res.status(400).json({ ok: false, error: error?.message || 'Unable to update order.' });
 
     let notificationSent = false;
-    if (status === 'picked_up' && typeof notifyAdmin === 'function') {
-      notificationSent = await notifyAdmin(updated, 'driver_accepted');
-    }
+    if (status === 'picked_up' && typeof notifyAdmin === 'function') notificationSent = await notifyAdmin(updated, 'driver_accepted');
     if (status === 'delivered') await supabase.from('drivers').update({ total_deliveries: Number(driver.total_deliveries || 0) + 1 }).eq('id', driver.id);
     res.json({ ok: true, order: orderForDriver(updated), notificationSent });
   });
@@ -195,6 +193,73 @@ export const registerDriverRoutes = (app, supabase, sessionSecret, authenticateA
     const { error } = await supabase.from('orders').update({ driver_id: driver.id, driver: driverInfo, order_status: 'assigned', status_history: [...history, { status: 'assigned', timestamp: now, noteFR: `Livreur assigné : ${driver.full_name}`, noteEN: `Driver assigned: ${driver.full_name}` }] }).eq('id', req.params.id);
     if (error) return res.status(400).json({ ok: false, error: error.message });
     res.json({ ok: true, driver: driverInfo });
+  });
+
+  // Admin catalog/settings API. Kept in this registration module so it reuses the
+  // already authenticated server-side admin guard without exposing service-role access.
+  const restaurantOut = r => ({ id:r.id, name:r.name, descriptionFR:r.description_fr||'', descriptionEN:r.description_en||'', logoUrl:r.logo_url||'', coverImageUrl:r.cover_image_url||'', address:r.address||'', neighborhood:r.neighborhood||'', phone:r.phone||'', latitude:Number(r.latitude||0), longitude:Number(r.longitude||0), deliveryFee:Number(r.delivery_fee||0), estimatedDeliveryTime:r.estimated_delivery_time||r.delivery_time||'', minOrder:Number(r.min_order||0), isOpen:r.is_open!==false, isFeatured:Boolean(r.is_featured), cuisineTypes:Array.isArray(r.cuisine_types)?r.cuisine_types:[], tags:Array.isArray(r.tags)?r.tags:[] });
+  const categoryOut = c => ({ id:c.id, nameFR:c.name_fr||'', nameEN:c.name_en||'', imageUrl:c.image_url||'', iconName:c.icon_name||'', sortOrder:Number(c.sort_order||0), dishCount:Number(c.dish_count||0) });
+  const promotionOut = p => ({ id:p.id, code:p.code||'', titleFR:p.title_fr||'', titleEN:p.title_en||'', descriptionFR:p.description_fr||'', descriptionEN:p.description_en||'', imageUrl:p.image_url||'', discountType:p.discount_type==='fixed'?'fixed':'percentage', discountValue:Number(p.discount_value||0), minOrderValue:Number(p.min_order_value||0), startDate:p.valid_from||'', endDate:p.valid_until||'', active:p.is_active!==false });
+  const restaurantRow = (v, id) => ({ id:id||String(v.id||`restaurant-${Date.now()}`), name:String(v.name||'').trim(), description_fr:String(v.descriptionFR||''), description_en:String(v.descriptionEN||''), logo_url:String(v.logoUrl||''), cover_image_url:String(v.coverImageUrl||''), address:String(v.address||''), neighborhood:String(v.neighborhood||''), phone:String(v.phone||''), latitude:Number(v.latitude||0)||null, longitude:Number(v.longitude||0)||null, delivery_fee:Math.max(0,Number(v.deliveryFee)||0), estimated_delivery_time:String(v.estimatedDeliveryTime||'25–35 min'), delivery_time:String(v.estimatedDeliveryTime||'25–35 min'), min_order:Math.max(0,Number(v.minOrder)||0), is_open:v.isOpen!==false, is_featured:Boolean(v.isFeatured), cuisine_types:Array.isArray(v.cuisineTypes)?v.cuisineTypes:[], tags:Array.isArray(v.tags)?v.tags:[] });
+  const categoryRow = (v, id) => ({ id:id||String(v.id||`category-${Date.now()}`), name_fr:String(v.nameFR||''), name_en:String(v.nameEN||''), image_url:String(v.imageUrl||''), icon_name:String(v.iconName||''), sort_order:Number(v.sortOrder)||0 });
+  const promotionRow = (v, id) => ({ id:id||String(v.id||`promo-${Date.now()}`), code:String(v.code||'').trim().toUpperCase(), title_fr:String(v.titleFR||''), title_en:String(v.titleEN||''), description_fr:String(v.descriptionFR||''), description_en:String(v.descriptionEN||''), image_url:String(v.imageUrl||''), discount_type:v.discountType==='fixed'?'fixed':'percentage', discount_value:Math.max(0,Number(v.discountValue)||0), min_order_value:Math.max(0,Number(v.minOrderValue)||0), valid_until:v.endDate?new Date(v.endDate).toISOString():null, is_active:v.active!==false });
+  const resourceMap = { restaurants: ['restaurants', restaurantOut, restaurantRow], categories: ['categories', categoryOut, categoryRow], promotions: ['promotions', promotionOut, promotionRow] };
+
+  app.get('/api/admin/catalog', async (req, res) => {
+    if (!authenticateAdmin(req, res)) return;
+    if (!supabase) return res.status(503).json({ ok:false, error:'Supabase server credentials are not configured.' });
+    const [r,c,p,s] = await Promise.all([
+      supabase.from('restaurants').select('*').order('name'),
+      supabase.from('categories').select('*').order('sort_order'),
+      supabase.from('promotions').select('*').order('created_at',{ascending:false}),
+      supabase.from('app_settings').select('key,value')
+    ]);
+    const firstError = [r,c,p].find(x=>x.error)?.error;
+    if (firstError) return res.status(500).json({ok:false,error:firstError.message});
+    const settings = {};
+    for (const row of s.data || []) settings[row.key] = typeof row.value === 'object' && row.value !== null && 'value' in row.value ? String(row.value.value ?? '') : String(row.value ?? '');
+    res.json({ok:true,restaurants:(r.data||[]).map(restaurantOut),categories:(c.data||[]).map(categoryOut),promotions:(p.data||[]).map(promotionOut),settings});
+  });
+
+  for (const [resource,[table,out,rowForDb]] of Object.entries(resourceMap)) {
+    app.post(`/api/admin/${resource}`, async (req,res) => {
+      if (!authenticateAdmin(req,res)) return;
+      if (!supabase) return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});
+      const item = rowForDb(req.body?.item || {});
+      if (!item.name && resource==='restaurants') return res.status(400).json({ok:false,error:'Restaurant name is required.'});
+      if (!item.name_fr && resource==='categories') return res.status(400).json({ok:false,error:'Category name is required.'});
+      if (!item.code && resource==='promotions') return res.status(400).json({ok:false,error:'Promotion code is required.'});
+      const {data,error} = await supabase.from(table).insert(item).select('*').single();
+      if (error) return res.status(400).json({ok:false,error:error.message});
+      res.json({ok:true,item:out(data)});
+    });
+    app.put(`/api/admin/${resource}/:id`, async (req,res) => {
+      if (!authenticateAdmin(req,res)) return;
+      if (!supabase) return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});
+      const {id,...updates} = rowForDb(req.body?.item || {}, req.params.id);
+      const {data,error} = await supabase.from(table).update(updates).eq('id',id).select('*').single();
+      if (error) return res.status(400).json({ok:false,error:error.message});
+      res.json({ok:true,item:out(data)});
+    });
+    app.delete(`/api/admin/${resource}/:id`, async (req,res) => {
+      if (!authenticateAdmin(req,res)) return;
+      if (!supabase) return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});
+      const {error} = await supabase.from(table).delete().eq('id',req.params.id);
+      if (error) return res.status(400).json({ok:false,error:error.message});
+      res.json({ok:true});
+    });
+  }
+
+  app.put('/api/admin/settings', async (req,res) => {
+    if (!authenticateAdmin(req,res)) return;
+    if (!supabase) return res.status(503).json({ok:false,error:'Supabase server credentials are not configured.'});
+    const settings = req.body?.settings;
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return res.status(400).json({ok:false,error:'Invalid settings payload.'});
+    const allowed = new Set(['app_name','admin_whatsapp','default_currency','app_logo_url']);
+    const rows = Object.entries(settings).filter(([key])=>allowed.has(key)).map(([key,value])=>({key,value:{value:String(value ?? '')}}));
+    const {error} = rows.length ? await supabase.from('app_settings').upsert(rows,{onConflict:'key'}) : {error:null};
+    if (error) return res.status(400).json({ok:false,error:error.message});
+    res.json({ok:true});
   });
 };
 
