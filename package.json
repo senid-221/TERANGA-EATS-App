@@ -6,7 +6,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/prepare-build.cjs && vite build",
+    "build": "node scripts/build-production.cjs",
     "start": "node server/start-production.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
