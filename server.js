@@ -3,7 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { existsSync } from 'fs';
-import { execFileSync } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
 import { registerDriverRoutes } from './server/driverRoutes.js';
@@ -463,42 +462,12 @@ const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
 const distIndex = path.join(distPath, 'index.html');
 
-const runBuildWithoutNpm = () => {
-  const projectRoot = __dirname;
-  const prepareScript = path.join(projectRoot, 'scripts', 'prepare-build.cjs');
-  const viteCli = path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js');
-
-  if (existsSync(prepareScript)) {
-    execFileSync(process.execPath, [prepareScript], {
-      cwd: projectRoot,
-      stdio: 'inherit',
-      env: process.env
-    });
-  }
-
-  if (!existsSync(viteCli)) {
-    throw new Error(`Vite CLI not found at ${viteCli}. Dependencies must be installed before starting the application.`);
-  }
-
-  execFileSync(process.execPath, [viteCli, 'build'], {
-    cwd: projectRoot,
-    stdio: 'inherit',
-    env: process.env
-  });
-};
-
+// Production assets are built in CI and deployed with the application.
+// Hostinger runtime must never execute Vite/esbuild: its restricted process
+// environment was terminating the esbuild service during startup.
 if (!existsSync(distIndex)) {
-  console.log(`Production build not found at ${distIndex}. Running Vite build directly with Node...`);
-  try {
-    runBuildWithoutNpm();
-  } catch (error) {
-    console.error('Production build failed. Server will not start.', error?.message || error);
-    process.exit(1);
-  }
-}
-
-if (!existsSync(distIndex)) {
-  console.error(`Production build is still missing: ${distIndex}`);
+  console.error(`Production assets are missing: ${distIndex}`);
+  console.error('Deploy the CI-generated dist/ directory before starting the server.');
   process.exit(1);
 }
 
