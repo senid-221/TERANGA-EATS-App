@@ -16,3 +16,11 @@ for (const file of candidates) {
     console.warn(`Could not chmod esbuild executable: ${file}`, error?.message || error);
   }
 }
+
+// Prefer the native Linux binary explicitly on Hostinger. This avoids esbuild
+// resolving a second/incorrect binary wrapper in restricted Node runtimes.
+const nativeEsbuild = candidates[0];
+if (process.platform === 'linux' && fs.existsSync(nativeEsbuild)) {
+  process.env.ESBUILD_BINARY_PATH = nativeEsbuild;
+  console.log(`Using native esbuild binary: ${nativeEsbuild}`);
+}
