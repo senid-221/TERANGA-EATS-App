@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { existsSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
 import { registerDriverRoutes } from './server/driverRoutes.js';
@@ -405,7 +406,6 @@ const notifyWhatsApp = async (order, event = 'new_order') => {
 };
 
 app.post('/api/orders/notify', async (req, res) => {
-  // Kept only for backward compatibility with older clients; it is not public anymore.
   if (!authenticateAdmin(req, res)) return;
   if (!supabase) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
   const id = String(req.body?.orderId || '').trim();
@@ -461,15 +461,29 @@ registerDriverRoutes(app, supabase, SESSION_SECRET, authenticateAdmin, notifyWha
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
+const distIndex = path.join(distPath, 'index.html');
 
-if (!existsSync(path.join(distPath, 'index.html'))) {
-  console.error(`Production build is missing: ${path.join(distPath, 'index.html')}`);
-  console.error('Run "npm run build" in the Hostinger build command before starting the application.');
+if (!existsSync(distIndex)) {
+  console.log(`Production build not found at ${distIndex}. Running npm run build before starting the server...`);
+  try {
+    execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
+      cwd: __dirname,
+      stdio: 'inherit',
+      env: process.env
+    });
+  } catch (error) {
+    console.error('Production build failed. Server will not start.', error?.message || error);
+    process.exit(1);
+  }
+}
+
+if (!existsSync(distIndex)) {
+  console.error(`Production build is still missing: ${distIndex}`);
   process.exit(1);
 }
 
 app.use(express.static(distPath));
-app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
+app.get('*', (_req, res) => res.sendFile(distIndex));
 app.use((err, _req, res, _next) => {
   if (err?.type === 'entity.parse.failed') return res.status(400).json({ ok: false, error: 'Invalid JSON payload.' });
   console.error('Unhandled API error:', err);
