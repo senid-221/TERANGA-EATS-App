@@ -12,6 +12,13 @@ const distIndex = path.join(projectRoot, 'dist', 'index.html');
 const runBuildWithoutNpm = () => {
   const prepareScript = path.join(projectRoot, 'scripts', 'prepare-build.cjs');
   const viteCli = path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+  const nativeEsbuild = path.join(projectRoot, 'node_modules', '@esbuild', 'linux-x64', 'bin', 'esbuild');
+
+  if (process.platform === 'linux' && fs.existsSync(nativeEsbuild)) {
+    process.env.ESBUILD_BINARY_PATH = nativeEsbuild;
+    try { fs.chmodSync(nativeEsbuild, 0o755); } catch {}
+    console.log(`Using native esbuild binary: ${nativeEsbuild}`);
+  }
 
   if (fs.existsSync(prepareScript)) {
     execFileSync(process.execPath, [prepareScript], {
