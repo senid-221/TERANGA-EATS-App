@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/prepare-build.cjs && vite build",
-    "start": "node server.js",
+    "start": "node server/admin-bootstrap.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
