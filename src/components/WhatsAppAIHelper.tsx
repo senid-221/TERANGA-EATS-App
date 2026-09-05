@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 const DEVELOPER_WHATSAPP = '250726969060';
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = String(import.meta.env.VITE_OPENROUTER_API_KEY || '').trim();
-const OPENROUTER_MODEL = 'openai/gpt-4o';
 const MEMORY_KEY = 'terangaeats_ai_helper_memory_v1';
+
+type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
 const whatsappIcon = (
   <svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7 fill-current">
@@ -13,25 +12,10 @@ const whatsappIcon = (
   </svg>
 );
 
-type ChatMessage = { role: 'user' | 'assistant'; text: string };
-
 const initialMessage: ChatMessage = {
   role: 'assistant',
   text: 'Muraho! 👋 Ndi TerangaEats Client Helper. Nakufasha kumenya menu, gutumiza, delivery, payment, cyangwa uko wavugana na team. Mbaza ikibazo cyawe.',
 };
-
-const SYSTEM_PROMPT = `You are TerangaEats Client Helper, the customer-support AI inside the TerangaEats food ordering app.
-
-Rules:
-- Give useful, natural, accurate answers. Do not make up facts.
-- Never invent product names, prices, discounts, delivery times, order status, payment confirmation, restaurant availability, addresses, or company policies.
-- If the conversation does not contain the information needed, clearly say that you do not have that information and direct the customer to the TerangaEats human team on WhatsApp.
-- Help with menu questions, how to order, checkout, delivery, payment methods, order tracking, and general app support.
-- If the customer asks in Kinyarwanda, answer in natural Kinyarwanda. If French, answer in French. If English, answer in English. Keep the language consistent with the customer.
-- Be polite, concise, practical, and friendly.
-- Remember the conversation history supplied in the messages and use it to avoid asking for information the customer already provided.
-- Do not claim that you performed an action in the app unless the conversation explicitly confirms it.
-- If a human is needed, say so and recommend the WhatsApp Team button.`;
 
 const loadMemory = (): ChatMessage[] => {
   try {
@@ -63,18 +47,6 @@ const greetingReply = (text: string): ChatMessage => {
     return { role: 'assistant', text: 'Hello! 👋 Welcome to TerangaEats. How can I help you today?' };
   }
   return { role: 'assistant', text: 'Muraho! 👋 Murakaza neza kuri TerangaEats. Nakufasha iki uyu munsi?' };
-};
-
-const extractReply = (data: any): string => {
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content.trim();
-  if (Array.isArray(content)) {
-    return content
-      .map((part: any) => typeof part === 'string' ? part : String(part?.text || ''))
-      .join('')
-      .trim();
-  }
-  return '';
 };
 
 export const WhatsAppAIHelper: React.FC = () => {
@@ -114,39 +86,24 @@ export const WhatsAppAIHelper: React.FC = () => {
     setLoading(true);
 
     try {
-      if (!OPENROUTER_API_KEY) {
-        throw new Error('VITE_OPENROUTER_API_KEY is not configured');
-      }
-
-      const response = await fetch(OPENROUTER_API_URL, {
+      const response = await fetch('/api/ai-help', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-          'HTTP-Referer': window.location.origin || 'https://citymarketbusiness.com',
-          'X-Title': 'TerangaEats',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: OPENROUTER_MODEL,
-          temperature: 0.2,
-          max_tokens: 700,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            ...conversation.slice(-30).map(m => ({ role: m.role, content: m.text })),
-          ],
+          messages: conversation.slice(-30).map(m => ({ role: m.role, content: m.text })),
         }),
       });
 
       const data = await response.json().catch(() => ({}));
-      const reply = extractReply(data);
+      const reply = typeof data?.reply === 'string' ? data.reply.trim() : '';
 
-      if (!response.ok || !reply) {
-        throw new Error(String(data?.error?.message || `OpenRouter request failed (${response.status})`));
+      if (!response.ok || !reply || data?.ok === false) {
+        throw new Error(String(data?.error || 'AI Helper request failed'));
       }
 
       setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
     } catch (error) {
-      console.warn('OpenRouter AI Helper failed:', error);
+      console.warn('AI Helper failed:', error);
       setMessages(prev => [
         ...prev,
         {
