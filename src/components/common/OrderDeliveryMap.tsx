@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Map, AdvancedMarker, InfoWindow, useMap } from '@vis.gl/react-google-maps';
-import { GoogleMapsWrapper } from './GoogleMapsWrapper';
+import { GoogleMapsWrapper } from '../maps/GoogleMapsWrapper';
 import { DriverInfo } from '../../types';
 import { MapPin, Motorbike, Navigation, Clock, Utensils } from 'lucide-react';
 
