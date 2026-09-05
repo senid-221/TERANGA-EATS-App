@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { DollarSign, Image as ImageIcon, LogOut, MapPin, Pencil, Plus, RefreshCw, Search, ShoppingBag, Store, Trash2, Utensils, X } from 'lucide-react';
+import { Bell, DollarSign, LogOut, MapPin, Pencil, Plus, RefreshCw, Search, ShoppingBag, Store, Trash2, Utensils, X } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Order, OrderStatus, Product } from '../../types';
 
 const emptyProduct = (restaurantId = '', restaurantName = '', categoryId = ''): Omit<Product, 'id' | 'createdAt'> => ({ restaurantId, restaurantName, categoryId, nameFR: '', nameEN: '', descriptionFR: '', descriptionEN: '', imageUrl: '', price: 0, originalPrice: undefined, available: true, rating: 4.9, reviewCount: 0, prepTimeMinutes: 20, isSpicy: false, isPopular: false, isSignature: false, ingredientsFR: [], ingredientsEN: [], options: [] });
+const ORDER_FILTERS = ['all','pending','accepted','preparing','ready','assigned','picked_up','delivering','driver_arrived','delivered','cancelled'];
 
 export const AdminDashboardScreen: React.FC = () => {
   const { t, orders, restaurants, bookings, products, categories, updateOrderStatus, showToast, isSupabaseConnected, syncData, addNewProduct, updateProduct, deleteProduct, toggleProductAvailability } = useApp();
@@ -15,6 +16,7 @@ export const AdminDashboardScreen: React.FC = () => {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [newProduct, setNewProduct] = useState<Omit<Product, 'id' | 'createdAt'> | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
+  const [notifyingOrderId, setNotifyingOrderId] = useState<string | null>(null);
 
   useEffect(() => setLiveOrders(orders), [orders]);
 
@@ -22,20 +24,10 @@ export const AdminDashboardScreen: React.FC = () => {
     try {
       const response = await fetch('/api/admin/orders', { credentials: 'include', cache: 'no-store' });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setOrdersError(String(result?.error || `Order feed unavailable (${response.status}).`));
-        return;
-      }
-      if (!Array.isArray(result.orders)) {
-        setOrdersError('Server returned an invalid order feed.');
-        return;
-      }
-      setOrdersError('');
-      setLiveOrders(result.orders);
-    } catch (error) {
-      console.warn('Live admin order feed failed:', error);
-      setOrdersError('Unable to connect to the live order feed.');
-    }
+      if (!response.ok) { setOrdersError(String(result?.error || `Order feed unavailable (${response.status}).`)); return; }
+      if (!Array.isArray(result.orders)) { setOrdersError('Server returned an invalid order feed.'); return; }
+      setOrdersError(''); setLiveOrders(result.orders);
+    } catch (error) { console.warn('Live admin order feed failed:', error); setOrdersError('Unable to connect to the live order feed.'); }
   };
 
   useEffect(() => {
@@ -55,15 +47,17 @@ export const AdminDashboardScreen: React.FC = () => {
   const startNewProduct = () => { const r = restaurants[0]; setEditingProduct(null); setNewProduct(emptyProduct(r?.id || '', r?.name || '', categories[0]?.id || '')); };
   const save = async () => { setSavingProduct(true); try { if (editingProduct) { if (await updateProduct(editingProduct)) { showToast('Produit mis à jour.'); setEditingProduct(null); } else showToast('Échec de mise à jour du produit.'); } else if (newProduct) { await addNewProduct(newProduct); showToast('Produit ajouté.'); setNewProduct(null); } } catch { showToast('Impossible d’enregistrer le produit.'); } finally { setSavingProduct(false); } };
   const confirmDelete = async (id: string) => { if (!window.confirm('Supprimer ce produit définitivement ?')) return; if (await deleteProduct(id)) showToast('Produit supprimé.'); else showToast('Échec de suppression.'); };
-  const handleLogout = async () => {
+  const handleNotifyOrder = async (orderId: string) => {
+    if (notifyingOrderId) return;
+    setNotifyingOrderId(orderId);
     try {
-      const response = await fetch('/api/admin/logout', { method: 'POST', credentials: 'include', cache: 'no-store' });
-      if (!response.ok) { showToast('Impossible de fermer la session.'); return; }
-      window.location.replace('/admin');
-    } catch {
-      showToast('Impossible de fermer la session.');
-    }
+      const response = await fetch('/api/admin/notify-order', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }) });
+      const result = await response.json().catch(() => ({}));
+      showToast(result?.notificationSent ? 'WhatsApp Admin envoyé.' : `WhatsApp non envoyé : ${result?.reason || 'vérifiez la session Wasender.'}`);
+    } catch { showToast('Impossible de joindre le service WhatsApp.'); }
+    finally { setNotifyingOrderId(null); }
   };
+  const handleLogout = async () => { try { const response = await fetch('/api/admin/logout', { method: 'POST', credentials: 'include', cache: 'no-store' }); if (!response.ok) { showToast('Impossible de fermer la session.'); return; } window.location.replace('/admin'); } catch { showToast('Impossible de fermer la session.'); } };
 
   return <div id="admin-dashboard" className="min-h-screen p-4 sm:p-6 pb-28 max-w-7xl mx-auto space-y-6 bg-[#F7F5F0]">
     <div className="bg-gradient-to-r from-[#006633] via-[#0A522A] to-[#1F2937] text-white rounded-[32px] p-6 sm:p-8 shadow-artistic-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-emerald-700/30">
@@ -73,16 +67,11 @@ export const AdminDashboardScreen: React.FC = () => {
 
     {ordersError && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"><span><strong>Order feed:</strong> {ordersError}</span><button onClick={() => void loadLiveOrders()} className="inline-flex items-center justify-center gap-1 rounded-xl bg-white border border-red-200 px-3 py-1.5 font-bold"><RefreshCw className="w-3.5 h-3.5" />Retry</button></div>}
 
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <Stat label={t('adminTotalSales')} value={`${totalRevenue.toLocaleString()} FCFA`} note="Chiffre d'affaires réel" icon={<DollarSign className="w-4 h-4 text-[#006633]" />} />
-      <Stat label={t('adminTotalOrders')} value={`${liveOrders.length} commandes`} note={`${activeOrdersCount} en cours`} icon={<ShoppingBag className="w-4 h-4 text-amber-700" />} />
-      <Stat label={t('adminActiveRestaurants')} value={`${restaurants.length} partenaires`} note="Restaurants actifs" icon={<Store className="w-4 h-4 text-[#007CB0]" />} />
-      <Stat label="Réservations Tables" value={`${bookings.length} réservées`} note="En direct" icon={<Utensils className="w-4 h-4 text-purple-800" />} />
-    </div>
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><Stat label={t('adminTotalSales')} value={`${totalRevenue.toLocaleString()} FCFA`} note="Chiffre d'affaires réel" icon={<DollarSign className="w-4 h-4 text-[#006633]" />} /><Stat label={t('adminTotalOrders')} value={`${liveOrders.length} commandes`} note={`${activeOrdersCount} en cours`} icon={<ShoppingBag className="w-4 h-4 text-amber-700" />} /><Stat label={t('adminActiveRestaurants')} value={`${restaurants.length} partenaires`} note="Restaurants actifs" icon={<Store className="w-4 h-4 text-[#007CB0]" />} /><Stat label="Réservations Tables" value={`${bookings.length} réservées`} note="En direct" icon={<Utensils className="w-4 h-4 text-purple-800" />} /></div>
 
     <section className="bg-white rounded-[32px] p-5 sm:p-6 border border-[#F0EDE8] shadow-artistic space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F0EDE8]"><div><h3 className="font-heading font-black text-lg text-[#2D2D2D]">Flux des commandes en direct</h3><p className="text-xs text-gray-500 font-medium">Nouvelles commandes chargées automatiquement toutes les 3 secondes.</p></div><div className="flex gap-1.5 overflow-x-auto no-scrollbar bg-[#F7F5F0] p-1 rounded-2xl">{['all','pending','preparing','ready','delivering','delivered'].map(filter => <button key={filter} onClick={() => setSelectedStatusFilter(filter)} className={`px-3.5 py-1.5 rounded-xl text-xs font-black whitespace-nowrap ${selectedStatusFilter === filter ? 'bg-[#006633] text-white' : 'text-gray-600'}`}>{filter === 'all' ? 'Toutes' : filter}</button>)}</div></div>
-      <div className="space-y-3">{visibleOrders.length === 0 ? <div className="text-center py-10 text-gray-400"><ShoppingBag className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs font-bold">Aucune commande enregistrée pour ce filtre.</p></div> : visibleOrders.map(order => <div key={order.id} className="p-4 sm:p-5 rounded-[24px] border border-[#F0EDE8] bg-[#FAF8F5] flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div className="space-y-1.5 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className="font-black text-xs text-[#006633]">{order.id}</span><span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#006633] text-[10px] font-black uppercase">{order.orderStatus}</span><span className="text-xs font-black">{(Number(order.total) || 0).toLocaleString()} FCFA</span></div><p className="text-xs font-bold">{order.customerName} → {order.restaurantName}</p><p className="text-[11px] text-gray-500 flex items-center gap-1"><MapPin className="w-3 h-3 text-[#006633]" />{order.deliveryAddress?.neighborhood} ({order.deliveryAddress?.streetAddress})</p></div><div className="flex items-center gap-1.5 flex-wrap">{(['preparing','ready','delivering','delivered'] as OrderStatus[]).map(st => <button key={st} onClick={async () => { await updateOrderStatus(order.id, st); await loadLiveOrders(); showToast(`Statut ${order.id} : ${st}`); }} className={`px-3 py-1.5 rounded-xl text-xs font-black ${order.orderStatus === st ? 'bg-[#006633] text-white' : 'bg-white border border-[#F0EDE8] text-gray-700'}`}>{st}</button>)}</div></div>)}</div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F0EDE8]"><div><h3 className="font-heading font-black text-lg text-[#2D2D2D]">Flux des commandes en direct</h3><p className="text-xs text-gray-500 font-medium">Nouvelles commandes chargées automatiquement toutes les 3 secondes.</p></div><div className="flex gap-1.5 overflow-x-auto no-scrollbar bg-[#F7F5F0] p-1 rounded-2xl">{ORDER_FILTERS.map(filter => <button key={filter} onClick={() => setSelectedStatusFilter(filter)} className={`px-3.5 py-1.5 rounded-xl text-xs font-black whitespace-nowrap ${selectedStatusFilter === filter ? 'bg-[#006633] text-white' : 'text-gray-600'}`}>{filter === 'all' ? 'Toutes' : filter}</button>)}</div></div>
+      <div className="space-y-3">{visibleOrders.length === 0 ? <div className="text-center py-10 text-gray-400"><ShoppingBag className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs font-bold">Aucune commande enregistrée pour ce filtre.</p></div> : visibleOrders.map(order => <div key={order.id} className="p-4 sm:p-5 rounded-[24px] border border-[#F0EDE8] bg-[#FAF8F5] flex flex-col gap-3"><div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3"><div className="space-y-1.5 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className="font-black text-xs text-[#006633]">{order.id}</span><span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#006633] text-[10px] font-black uppercase">{order.orderStatus}</span><span className="text-xs font-black">{(Number(order.total) || 0).toLocaleString()} FCFA</span></div><p className="text-xs font-bold">{order.customerName} → {order.restaurantName}</p><p className="text-[11px] text-gray-500 flex items-center gap-1"><MapPin className="w-3 h-3 text-[#006633]" />{order.deliveryAddress?.neighborhood} ({order.deliveryAddress?.streetAddress})</p></div><div className="flex items-center gap-1.5 flex-wrap"><button onClick={() => void handleNotifyOrder(order.id)} disabled={notifyingOrderId === order.id} className="px-3 py-1.5 rounded-xl text-xs font-black bg-[#E8F8EF] text-[#006633] border border-emerald-200 inline-flex items-center gap-1.5 disabled:opacity-50"><Bell className={`w-3.5 h-3.5 ${notifyingOrderId === order.id ? 'animate-pulse' : ''}`} />{notifyingOrderId === order.id ? 'Envoi…' : 'WhatsApp Admin'}</button>{(['accepted','preparing','ready','assigned','picked_up','delivering','driver_arrived','delivered','cancelled'] as OrderStatus[]).map(st => <button key={st} onClick={async () => { await updateOrderStatus(order.id, st); await loadLiveOrders(); }} className={`px-3 py-1.5 rounded-xl text-xs font-black ${order.orderStatus === st ? 'bg-[#006633] text-white' : 'bg-white border border-[#F0EDE8] text-gray-700'}`}>{st}</button>)}</div></div></div>)}</div>
     </section>
 
     <section className="bg-white rounded-[32px] p-5 sm:p-6 border border-[#F0EDE8] shadow-artistic space-y-4">
