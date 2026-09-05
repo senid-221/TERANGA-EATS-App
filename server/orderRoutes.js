@@ -41,6 +41,16 @@ const productSnapshot = product => ({
 const publicOrder = row => ({ id: row.id, userId: row.user_id, customerName: row.customer_name, customerPhone: row.customer_phone, customerEmail: row.customer_email || row.delivery_address?.email || '', restaurantId: row.restaurant_id, restaurantName: row.restaurant_name, restaurantLogo: row.restaurant_logo, restaurantPhone: row.restaurant_phone, restaurantAddress: row.restaurant_address, driver: row.driver || undefined, items: Array.isArray(row.items) ? row.items : [], subtotal: Number(row.subtotal) || 0, deliveryFee: Number(row.delivery_fee) || 0, discount: Number(row.discount) || 0, promoCode: row.promo_code || undefined, total: Number(row.total) || 0, paymentMethod: row.payment_method, paymentStatus: row.payment_status, orderStatus: row.order_status, deliveryAddress: row.delivery_address || {}, estimatedDeliveryTime: row.estimated_delivery_time, deliveredAt: row.delivered_at, createdAt: row.created_at, statusHistory: Array.isArray(row.status_history) ? row.status_history : [] });
 
 export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
+  // Public, read-only branding settings. Secrets and admin settings remain protected.
+  app.get('/api/app-settings', async (_req, res) => {
+    if (!supabase) return res.json({ ok: true, settings: { app_name: 'TerangaEats', default_currency: 'FCFA' } });
+    const { data, error } = await supabase.from('app_settings').select('key,value').in('key', ['app_name','default_currency','app_logo_url']);
+    if (error) return res.json({ ok: true, settings: { app_name: 'TerangaEats', default_currency: 'FCFA' } });
+    const settings = {};
+    for (const row of data || []) settings[row.key] = typeof row.value === 'object' && row.value !== null && 'value' in row.value ? String(row.value.value ?? '') : String(row.value ?? '');
+    res.json({ ok: true, settings: { app_name: settings.app_name || 'TerangaEats', default_currency: settings.default_currency || 'FCFA', app_logo_url: settings.app_logo_url || '' } });
+  });
+
   app.post('/api/orders', async (req, res) => {
     if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
     try {
