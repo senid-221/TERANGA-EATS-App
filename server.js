@@ -463,14 +463,34 @@ const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, 'dist');
 const distIndex = path.join(distPath, 'index.html');
 
-if (!existsSync(distIndex)) {
-  console.log(`Production build not found at ${distIndex}. Running npm run build before starting the server...`);
-  try {
-    execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
-      cwd: __dirname,
+const runBuildWithoutNpm = () => {
+  const projectRoot = __dirname;
+  const prepareScript = path.join(projectRoot, 'scripts', 'prepare-build.cjs');
+  const viteCli = path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+
+  if (existsSync(prepareScript)) {
+    execFileSync(process.execPath, [prepareScript], {
+      cwd: projectRoot,
       stdio: 'inherit',
       env: process.env
     });
+  }
+
+  if (!existsSync(viteCli)) {
+    throw new Error(`Vite CLI not found at ${viteCli}. Dependencies must be installed before starting the application.`);
+  }
+
+  execFileSync(process.execPath, [viteCli, 'build'], {
+    cwd: projectRoot,
+    stdio: 'inherit',
+    env: process.env
+  });
+};
+
+if (!existsSync(distIndex)) {
+  console.log(`Production build not found at ${distIndex}. Running Vite build directly with Node...`);
+  try {
+    runBuildWithoutNpm();
   } catch (error) {
     console.error('Production build failed. Server will not start.', error?.message || error);
     process.exit(1);
