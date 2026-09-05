@@ -9,13 +9,44 @@ import { registerDriverRoutes } from './server/driverRoutes.js';
 import { registerOrderRoutes } from './server/orderRoutes.js';
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '');
 const SESSION_SECRET = String(process.env.ADMIN_SESSION_SECRET || '');
 const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+  if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
 app.use(express.json({ limit: '256kb' }));
+
+const rateBuckets = new Map();
+const rateLimit = ({ windowMs, max, keyPrefix }) => (req, res, next) => {
+  const now = Date.now();
+  const ip = String(req.ip || req.socket.remoteAddress || 'unknown');
+  const key = `${keyPrefix}:${ip}`;
+  const current = rateBuckets.get(key);
+  if (!current || now >= current.resetAt) rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+  else current.count += 1;
+  const bucket = rateBuckets.get(key);
+  if (bucket.count > max) {
+    res.setHeader('Retry-After', Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)));
+    return res.status(429).json({ ok: false, error: 'Too many requests. Please try again later.' });
+  }
+  next();
+};
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets) if (bucket.resetAt <= now) rateBuckets.delete(key);
+}, 10 * 60 * 1000).unref();
 
 const sign = (value) => crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
 const makeSession = (email) => {
@@ -44,7 +75,7 @@ const authenticateAdmin = (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'TerangaEats' }));
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, keyPrefix: 'admin-login' }), (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (!ADMIN_EMAIL || !ADMIN_PASSWORD || !SESSION_SECRET) return res.status(503).json({ ok: false, error: 'Admin authentication is not configured on the server.' });
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -133,14 +164,34 @@ app.get('/api/admin/diagnostics', async (req, res) => {
     wasenderConfigured: Boolean(String(process.env.WASENDER_API_KEY || '').trim() && String(process.env.WASENDER_ADMIN_NUMBER || '').trim()),
     adminAuthConfigured: Boolean(ADMIN_EMAIL && ADMIN_PASSWORD && SESSION_SECRET),
     orderTable: false,
-    orderCount: 0
+    orderCount: 0,
+    notificationTable: false,
+    failedNotifications: 0
   };
   if (supabase) {
     const { count, error } = await supabase.from('orders').select('id', { count: 'exact', head: true });
     result.orderTable = !error;
     result.orderCount = Number(count || 0);
+    const notifications = await supabase.from('order_notifications').select('id,status', { count: 'exact' });
+    result.notificationTable = !notifications.error;
+    result.failedNotifications = Array.isArray(notifications.data) ? notifications.data.filter(n => n.status === 'failed').length : 0;
   }
   res.json(result);
+});
+
+app.get('/api/admin/whatsapp/status', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  const apiKey = String(process.env.WASENDER_API_KEY || '').trim();
+  const base = String(process.env.WASENDER_API_URL || 'https://www.wasenderapi.com').replace(/\/$/, '');
+  if (!apiKey) return res.status(503).json({ ok: false, configured: false, status: 'not_configured' });
+  try {
+    const response = await fetch(`${base}/api/status`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(8000) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return res.status(502).json({ ok: false, configured: true, status: 'api_error' });
+    res.json({ ok: true, configured: true, status: String(data?.status || 'unknown') });
+  } catch {
+    res.status(502).json({ ok: false, configured: true, status: 'unreachable' });
+  }
 });
 
 app.post('/api/admin/products', async (req, res) => {
@@ -189,7 +240,7 @@ app.patch('/api/admin/orders/:id/status', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/orders/status', async (req, res) => {
+app.post('/api/orders/status', rateLimit({ windowMs: 5 * 60 * 1000, max: 30, keyPrefix: 'order-status' }), async (req, res) => {
   if (!supabase) return res.status(503).json({ ok: false, error: 'Supabase server credentials are not configured.' });
   const id = String(req.body?.orderId || '').trim();
   const phone = String(req.body?.phone || '').replace(/\D/g, '');
@@ -202,7 +253,7 @@ app.post('/api/orders/status', async (req, res) => {
 });
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = String(process.env.OPENROUTER_MODEL || 'openai/gpt-4o').trim();
+const OPENROUTER_MODEL = String(process.env.OPENROUTER_MODEL || 'openai/gpt-chat-latest').trim();
 const OPENROUTER_API_KEY = String(process.env.OPENROUTER_API_KEY || '').trim();
 const AI_SYSTEM_PROMPT = `You are TerangaEats Client Helper, the customer-support AI inside the TerangaEats food ordering app.\n\nRules:\n- Give useful, natural, accurate answers. Do not make up facts.\n- Use the catalog context supplied by the server for current product names and prices.\n- Never invent product names, prices, discounts, delivery times, order status, payment confirmation, restaurant availability, addresses, or company policies.\n- If the conversation does not contain the information needed, clearly say that you do not have that information and direct the customer to the TerangaEats human team on WhatsApp.\n- Help with menu questions, how to order, checkout, delivery, payment methods, order tracking, and general app support.\n- If the customer asks in Kinyarwanda, answer in natural Kinyarwanda. If French, answer in French. If English, answer in English. Keep the language consistent with the customer.\n- Be polite, concise, practical, and friendly.\n- Remember the conversation history supplied in the messages and use it to avoid asking for information the customer already provided.\n- Do not claim that you performed an action in the app unless the conversation explicitly confirms it.\n- If a human is needed, say so and recommend the WhatsApp Team button.`;
 const extractOpenRouterReply = data => {
@@ -212,11 +263,14 @@ const extractOpenRouterReply = data => {
   return '';
 };
 
-app.post('/api/ai-help', async (req, res) => {
+app.post('/api/ai-help', rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'ai-help' }), async (req, res) => {
   const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
   const fallbackMessage = String(req.body?.message || '').trim();
-  const normalized = messages.filter(m => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant')).slice(-30);
-  if (!normalized.length && fallbackMessage) normalized.push({ role: 'user', content: fallbackMessage });
+  const normalized = messages
+    .filter(m => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
+    .map(m => ({ role: m.role, content: m.content.slice(0, 2000) }))
+    .slice(-30);
+  if (!normalized.length && fallbackMessage) normalized.push({ role: 'user', content: fallbackMessage.slice(0, 2000) });
   if (!normalized.length) return res.status(400).json({ ok: false, reply: 'Andika ikibazo cyawe.' });
   if (!OPENROUTER_API_KEY) return res.status(503).json({ ok: false, reply: 'AI Helper ntabwo iraboneka ubu. Kanda WhatsApp uvugane na team yacu.' });
 
@@ -238,6 +292,7 @@ app.post('/api/ai-help', async (req, res) => {
         'X-Title': 'TerangaEats',
         'Content-Type': 'application/json'
       },
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
         temperature: 0.2,
@@ -273,11 +328,36 @@ const verifyWasenderWebhook = req => {
   if (!signature || !secret) return false;
   return signature === secret;
 };
+
+const upsertNotificationLog = async (orderId, event, patch = {}) => {
+  if (!supabase) return;
+  try {
+    await supabase.from('order_notifications').upsert({
+      order_id: orderId,
+      channel: 'whatsapp',
+      event,
+      updated_at: new Date().toISOString(),
+      ...patch
+    }, { onConflict: 'order_id,channel,event' });
+  } catch (error) {
+    console.warn('Notification log unavailable:', error?.message || error);
+  }
+};
+
 const notifyWhatsApp = async (order, event = 'new_order') => {
   const apiKey = String(process.env.WASENDER_API_KEY || '').trim();
   const adminNumber = normalizeWhatsAppNumber(process.env.WASENDER_ADMIN_NUMBER || '');
   if (!apiKey || !adminNumber) return false;
-  const items = (order.items || []).map(i => `• ${i.quantity || 1} × ${i.nameFR || i.nameEN || 'Produit'} — ${money(i.totalPrice ?? (i.unitPrice || 0) * (i.quantity || 1))}`).join('\n');
+
+  if (supabase) {
+    const { data: previous } = await supabase.from('order_notifications').select('status').eq('order_id', order.id).eq('channel', 'whatsapp').eq('event', event).maybeSingle();
+    if (previous?.status === 'sent') return true;
+  }
+
+  const items = (order.items || []).map(i => {
+    const name = i?.product?.nameFR || i?.product?.nameEN || i?.nameFR || i?.nameEN || 'Produit';
+    return `• ${i.quantity || 1} × ${name} — ${money(i.totalPrice ?? (i.unitPrice || 0) * (i.quantity || 1))}`;
+  }).join('\n');
   const a = order.delivery_address || {};
   const email = order.customer_email || a.email || '';
   const address = [a.neighborhood, a.streetAddress, a.buildingInfo].filter(Boolean).join(', ') || 'Adresse non précisée';
@@ -299,35 +379,33 @@ const notifyWhatsApp = async (order, event = 'new_order') => {
     `🗺️ *Google Maps :* ${mapsLink(a)}`,
     event === 'driver_accepted' ? `🏍️ Driver : *${driver.name || 'Livreur'}*` : ''
   ].filter(Boolean).join('\n');
+
+  await upsertNotificationLog(order.id, event, { status: 'pending', attempts: 1, last_error: null });
   try {
     const r = await fetch(`${WASENDER_API_URL}/api/send-message`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({ to: adminNumber, text: body })
     });
-    if (!r.ok) {
-      console.warn('WasenderAPI notification failed:', r.status, await r.text().catch(() => ''));
+    const result = await r.json().catch(() => null);
+    if (!r.ok || result?.success === false) {
+      const errorMessage = result?.message || `HTTP ${r.status}`;
+      await upsertNotificationLog(order.id, event, { status: 'failed', last_error: String(errorMessage).slice(0, 500) });
+      console.warn('WasenderAPI notification failed:', r.status, errorMessage);
       return false;
     }
-    const result = await r.json().catch(() => null);
-    return result?.success !== false;
+    await upsertNotificationLog(order.id, event, { status: 'sent', sent_at: new Date().toISOString(), provider_message_id: result?.data?.msgId ? String(result.data.msgId) : null, last_error: null });
+    return true;
   } catch (error) {
+    await upsertNotificationLog(order.id, event, { status: 'failed', last_error: String(error?.message || error).slice(0, 500) });
     console.warn('WasenderAPI request failed:', error);
     return false;
   }
 };
 
 app.post('/api/orders/notify', async (req, res) => {
-  if (!supabase) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
-  const id = String(req.body?.orderId || '').trim();
-  if (!id) return res.status(400).json({ ok: false, notificationSent: false, reason: 'Order ID is required.' });
-  const { data, error } = await supabase.from('orders').select('*').eq('id', id).single();
-  if (error || !data) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
-  const sent = await notifyWhatsApp(data);
-  return res.status(sent ? 200 : 202).json({ ok: true, notificationSent: sent, reason: sent ? undefined : 'WhatsApp is not configured or rejected the message.' });
-});
-
-app.post('/api/admin/notify-order', async (req, res) => {
+  // Kept only for backward compatibility with older clients; it is not public anymore.
   if (!authenticateAdmin(req, res)) return;
   if (!supabase) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
   const id = String(req.body?.orderId || '').trim();
@@ -335,7 +413,38 @@ app.post('/api/admin/notify-order', async (req, res) => {
   const { data, error } = await supabase.from('orders').select('*').eq('id', id).single();
   if (error || !data) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
   const sent = await notifyWhatsApp(data);
-  res.status(sent ? 200 : 202).json({ ok: true, notificationSent: sent, reason: sent ? undefined : 'WhatsApp is not configured or rejected the message.' });
+  return res.status(sent ? 200 : 202).json({ ok: true, notificationSent: sent });
+});
+
+app.post('/api/admin/notify-order', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, keyPrefix: 'admin-notify' }), async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, notificationSent: false, reason: 'Supabase server credentials are not configured.' });
+  const id = String(req.body?.orderId || '').trim();
+  if (!id) return res.status(400).json({ ok: false, notificationSent: false, reason: 'Order ID is required.' });
+  const { data, error } = await supabase.from('orders').select('*').eq('id', id).single();
+  if (error || !data) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
+  const sent = await notifyWhatsApp(data);
+  res.status(sent ? 200 : 202).json({ ok: true, notificationSent: sent, reason: sent ? undefined : 'WhatsApp is not configured, connected, or accepted the message.' });
+});
+
+app.get('/api/admin/notifications', async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, notifications: [] });
+  const { data, error } = await supabase.from('order_notifications').select('*').order('updated_at', { ascending: false }).limit(100);
+  if (error) return res.status(503).json({ ok: false, notifications: [], error: 'Notification log migration is missing.' });
+  res.json({ ok: true, notifications: data || [] });
+});
+
+app.post('/api/admin/notifications/retry', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, keyPrefix: 'admin-notification-retry' }), async (req, res) => {
+  if (!authenticateAdmin(req, res)) return;
+  if (!supabase) return res.status(503).json({ ok: false, notificationSent: false });
+  const orderId = String(req.body?.orderId || '').trim();
+  const event = String(req.body?.event || 'new_order');
+  if (!orderId || !['new_order', 'driver_accepted'].includes(event)) return res.status(400).json({ ok: false, notificationSent: false, reason: 'Valid orderId and event are required.' });
+  const { data: order, error } = await supabase.from('orders').select('*').eq('id', orderId).single();
+  if (error || !order) return res.status(404).json({ ok: false, notificationSent: false, reason: 'Order not found.' });
+  const sent = await notifyWhatsApp(order, event);
+  res.status(sent ? 200 : 202).json({ ok: true, notificationSent: sent });
 });
 
 app.post('/api/whatsapp/webhook', (req, res) => {
@@ -361,4 +470,9 @@ if (!existsSync(path.join(distPath, 'index.html'))) {
 
 app.use(express.static(distPath));
 app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
+app.use((err, _req, res, _next) => {
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ ok: false, error: 'Invalid JSON payload.' });
+  console.error('Unhandled API error:', err);
+  res.status(500).json({ ok: false, error: 'Internal server error.' });
+});
 app.listen(PORT, '0.0.0.0', () => console.log(`TerangaEats server running on port ${PORT}; static files: ${distPath}`));
