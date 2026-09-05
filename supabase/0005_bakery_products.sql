@@ -3,11 +3,12 @@
 -- Migration: 0005_bakery_products.sql
 -- ============================================================
 
-insert into public.categories (id, name_fr, name_en, icon_name, sort_order)
-values ('cat-boulangerie', 'Boulangerie & Pâtisserie', 'Bakery & Pastry', 'Croissant', 6)
+insert into public.categories (id, name_fr, name_en, image_url, icon_name, sort_order)
+values ('cat-boulangerie', 'Boulangerie & Pâtisserie', 'Bakery & Pastry', '/product-images/gateau-anniversaire.jpg', 'Cake', 6)
 on conflict (id) do update set
   name_fr = excluded.name_fr,
   name_en = excluded.name_en,
+  image_url = excluded.image_url,
   icon_name = excluded.icon_name,
   sort_order = excluded.sort_order;
 
