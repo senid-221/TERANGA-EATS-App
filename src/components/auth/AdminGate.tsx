@@ -15,6 +15,7 @@ type ErrorBoundaryProps = { children: React.ReactNode };
 type ErrorBoundaryState = { hasError: boolean };
 
 class AdminDashboardErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  declare readonly props: ErrorBoundaryProps;
   state: ErrorBoundaryState = { hasError: false };
   static getDerivedStateFromError(): ErrorBoundaryState { return { hasError: true }; }
   componentDidCatch(error: Error, info: ErrorInfo): void { console.error('Admin dashboard render error:', error, info); }
