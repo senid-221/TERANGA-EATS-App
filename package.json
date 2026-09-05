@@ -5,18 +5,14 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "vite",
     "build": "node scripts/prepare-build.cjs && vite build",
     "start": "node server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit",
-    "postinstall": "node scripts/prepare-build.cjs && vite build"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/backend": "^3.16.10",
-    "@clerk/clerk-react": "^5.61.3",
-    "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.113.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/canvas-confetti": "^1.9.0",
