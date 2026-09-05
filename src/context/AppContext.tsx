@@ -1,11 +1,22 @@
-import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { AppLanguage, AppNotification, CartItem, Category, Promotion, DakarNeighborhood, DeliveryAddress, Order, OrderStatus, PaymentMethod, Product, Restaurant, TableBooking, User, UserRole } from '../types';
 import { translations } from '../locales/translations';
 import { DAKAR_NEIGHBORHOODS } from '../data/constants';
 import { dbFetchRestaurants, dbFetchProducts, dbFetchOrders, dbFetchCategories, dbFetchPromotions, dbUpdateOrderStatus, dbFetchBookings, dbInsertBooking, dbCancelBooking, dbUpsertProfile, isSupabaseConfigured } from '../lib/supabase';
 import { saveProduct, removeProduct } from '../lib/productAdmin';
 
-const GUEST_USER: User = { id: '', fullName: 'Guest', role: 'customer', email: '', phone: '', language: 'fr', createdAt: new Date().toISOString() };
+const getGuestId = () => {
+  try {
+    const existing = localStorage.getItem('teranga_guest_id');
+    if (existing) return existing;
+    const id = `guest-${crypto.randomUUID()}`;
+    localStorage.setItem('teranga_guest_id', id);
+    return id;
+  } catch {
+    return `guest-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+};
+const GUEST_USER: User = { id: getGuestId(), fullName: 'Guest', role: 'customer', email: '', phone: '', language: 'fr', createdAt: new Date().toISOString() };
 
 interface AppContextType {
   language: AppLanguage; setLanguage: (lang: AppLanguage) => void; t: (key: string, params?: Record<string, string | number>) => string;
@@ -29,7 +40,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const t = (key: string, params?: Record<string, string | number>) => { const dict = translations[language] || translations.fr; let text = (dict as Record<string, string>)[key] || key; Object.entries(params || {}).forEach(([k, v]) => { text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v)); }); return text; };
   const [currentUser, setCurrentUser] = useState<User>(() => { const s = localStorage.getItem('teranga_user'); try { return s ? JSON.parse(s) : GUEST_USER; } catch { return GUEST_USER; } });
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('teranga_auth_session')));
-  const switchRole = (newRole: UserRole) => { const u = { ...currentUser, role: newRole }; setCurrentUser(u); localStorage.setItem('teranga_user', JSON.stringify(u)); void dbUpsertProfile(u); if (newRole === 'admin') setActiveScreen('admin_dashboard'); else if (newRole === 'restaurant') setActiveScreen('restaurant_dashboard'); else if (newRole === 'driver') setActiveScreen('driver_dashboard'); else { setActiveScreen('app'); setActiveTab('home'); } };
+  const switchRole = (newRole: UserRole) => {
+    if (newRole !== 'customer') return;
+    const u = { ...currentUser, role: 'customer' as UserRole };
+    setCurrentUser(u); localStorage.setItem('teranga_user', JSON.stringify(u));
+  };
   const setUserFromClerk = useCallback((data: { id: string; fullName?: string | null; email?: string | null; phone?: string | null; photoUrl?: string | null }) => { const isAdmin = data.email?.toLowerCase() === 'rw@akaziconnect.com'; const u: User = { id: data.id, fullName: data.fullName || (isAdmin ? 'Admin Teranga' : 'Client Teranga'), email: data.email || '', phone: data.phone || '', photoUrl: data.photoUrl || undefined, role: isAdmin ? 'admin' : 'customer', language, createdAt: new Date().toISOString() }; setCurrentUser(u); setIsAuthenticated(true); localStorage.setItem('teranga_user', JSON.stringify(u)); localStorage.setItem('teranga_auth_session', 'true'); void dbUpsertProfile(u); }, [language]);
   const logout = () => { setCurrentUser(GUEST_USER); setIsAuthenticated(false); localStorage.removeItem('teranga_auth_session'); setActiveScreen('splash'); };
   const [activeScreen, setActiveScreen] = useState('splash'); const [activeTab, setActiveTab] = useState('home'); const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null); const [selectedProduct, setSelectedProduct] = useState<Product | null>(null); const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -67,6 +82,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cartSubtotal=useMemo(()=>cartItems.reduce((s,i)=>s+i.totalPrice,0),[cartItems]); const cartDeliveryFee=useMemo(()=>cartItems.length?currentNeighborhood.deliveryFee:0,[cartItems,currentNeighborhood]); const cartDiscount=useMemo(()=>{if(!appliedPromo)return 0;const p=promotions.find(x=>x.code===appliedPromo);if(!p)return 0;return p.discountType==='fixed'?p.discountValue:Math.round(cartSubtotal*p.discountValue/100)},[appliedPromo,promotions,cartSubtotal]); const cartTotal=useMemo(()=>Math.max(0,cartSubtotal+cartDeliveryFee-cartDiscount),[cartSubtotal,cartDeliveryFee,cartDiscount]); const cartCount=useMemo(()=>cartItems.reduce((s,i)=>s+i.quantity,0),[cartItems]);
   const applyPromoCode=(code:string)=>{const p=promotions.find(x=>x.code.toUpperCase()===code.trim().toUpperCase());if(p&&p.active&&cartSubtotal>=p.minOrderValue){setAppliedPromo(p.code);return true}return false};
   const activeOrder=useMemo(()=>orders.find(o=>o.orderStatus!=='delivered'&&o.orderStatus!=='cancelled'&&(o.userId===currentUser.id||currentUser.role!=='customer'))||null,[orders,currentUser]);
+  const orderIdempotencyKey = useRef<string | null>(null);
 
   const createOrder=async(paymentMethod:PaymentMethod)=>{
     const first=cartItems[0];
@@ -75,10 +91,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if(!restaurant) throw new Error('Restaurant is not available.');
     const customer={name:deliveryAddress.fullName||currentUser.fullName,phone:deliveryAddress.phone||currentUser.phone,email:deliveryAddress.email||currentUser.email};
     if(!customer.name||!customer.phone||!customer.email||!deliveryAddress.streetAddress||!deliveryAddress.neighborhood) throw new Error('Customer and delivery information are required.');
-    const response=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({userId:currentUser.id||undefined,restaurantId:restaurant.id,items:cartItems,deliveryFee:cartDeliveryFee,promoCode:appliedPromo||undefined,paymentMethod,deliveryAddress:{...deliveryAddress,email:customer.email},customer})});
+    if(!orderIdempotencyKey.current) orderIdempotencyKey.current = crypto.randomUUID();
+    const response=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json','X-Idempotency-Key':orderIdempotencyKey.current},credentials:'include',body:JSON.stringify({userId:currentUser.id||undefined,restaurantId:restaurant.id,items:cartItems,deliveryFee:cartDeliveryFee,promoCode:appliedPromo||undefined,paymentMethod,deliveryAddress:{...deliveryAddress,email:customer.email},customer})});
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok||!result.order) throw new Error(String(result.error||'Unable to create order.'));
     const savedOrder=result.order as Order;
+    orderIdempotencyKey.current = null;
     setOrders(prev=>[savedOrder,...prev.filter(o=>o.id!==savedOrder.id)]);
     clearCart();
     setSelectedOrderId(savedOrder.id);
