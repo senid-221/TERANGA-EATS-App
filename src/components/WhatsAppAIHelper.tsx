@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 
 const DEVELOPER_WHATSAPP = '250726969060';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY || '';
+const OPENROUTER_API_KEY = String(import.meta.env.VITE_OPENROUTER_API_KEY || '').trim();
 const OPENROUTER_MODEL = 'openai/gpt-4o';
 const MEMORY_KEY = 'terangaeats_ai_helper_memory_v1';
 
@@ -49,6 +49,34 @@ const loadMemory = (): ChatMessage[] => {
   }
 };
 
+const isSimpleGreeting = (text: string) => {
+  const normalized = text.toLowerCase().trim().replace(/[!?.,]+$/g, '');
+  return /^(hi|hello|hey|muraho|mwaramutse|mwiriwe|mwiriweho|bonjour|bonsoir|salut|good morning|good afternoon|good evening)$/.test(normalized);
+};
+
+const greetingReply = (text: string): ChatMessage => {
+  const normalized = text.toLowerCase();
+  if (normalized.includes('bonjour') || normalized.includes('bonsoir') || normalized.includes('salut')) {
+    return { role: 'assistant', text: 'Bonjour! 👋 Bienvenue chez TerangaEats. Comment puis-je vous aider aujourd’hui ?' };
+  }
+  if (normalized.includes('hello') || normalized.includes('hey') || normalized === 'hi' || normalized.includes('good ')) {
+    return { role: 'assistant', text: 'Hello! 👋 Welcome to TerangaEats. How can I help you today?' };
+  }
+  return { role: 'assistant', text: 'Muraho! 👋 Murakaza neza kuri TerangaEats. Nakufasha iki uyu munsi?' };
+};
+
+const extractReply = (data: any): string => {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part: any) => typeof part === 'string' ? part : String(part?.text || ''))
+      .join('')
+      .trim();
+  }
+  return '';
+};
+
 export const WhatsAppAIHelper: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(loadMemory);
@@ -76,6 +104,13 @@ export const WhatsAppAIHelper: React.FC = () => {
     const conversation = [...messages, userMessage];
     setInput('');
     setMessages(conversation);
+
+    // Keep basic greetings responsive even when the AI service is temporarily unavailable.
+    if (isSimpleGreeting(text)) {
+      setMessages([...conversation, greetingReply(text)]);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -103,7 +138,7 @@ export const WhatsAppAIHelper: React.FC = () => {
       });
 
       const data = await response.json().catch(() => ({}));
-      const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+      const reply = extractReply(data);
 
       if (!response.ok || !reply) {
         throw new Error(String(data?.error?.message || `OpenRouter request failed (${response.status})`));
