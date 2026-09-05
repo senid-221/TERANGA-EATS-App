@@ -7,6 +7,7 @@ const request = async (url: string, method: string, productOrId: Product | strin
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(isProduct ? { product: productOrId } : undefined),
+    cache: 'no-store',
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -17,9 +18,8 @@ const request = async (url: string, method: string, productOrId: Product | strin
 };
 
 export const saveProduct = async (product: Product, _token?: string | null, create = false): Promise<boolean> => {
-  const shouldCreate = create || product.id.startsWith('prod-');
-  const method = shouldCreate ? 'POST' : 'PUT';
-  const url = shouldCreate ? '/api/admin/products' : `/api/admin/products/${encodeURIComponent(product.id)}`;
+  const method = create ? 'POST' : 'PUT';
+  const url = create ? '/api/admin/products' : `/api/admin/products/${encodeURIComponent(product.id)}`;
   return request(url, method, product);
 };
 
