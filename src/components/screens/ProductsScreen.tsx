@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, ShoppingBag } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useApp } from '../../context/AppContext';
 import { Product, Category } from '../../types';
 import { ProductCard } from '../common/ProductCard';
