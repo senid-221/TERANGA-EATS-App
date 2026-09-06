@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const PAYMENT_METHODS = new Set(['wave', 'orange_money', 'mtn', 'cash_on_delivery']);
+const PAYMENT_METHODS = new Set(['wave', 'orange_money', 'cash_on_delivery']);
 const DELIVERY_ZONES = new Map([
   ['Dakar Plateau', { fee: 500, time: '20–30 min' }], ['Les Almadies', { fee: 700, time: '25–35 min' }], ['Ngor & Île de Ngor', { fee: 700, time: '25–40 min' }],
   ['Ouakam & Monument de la Renaissance', { fee: 500, time: '20–35 min' }], ['Mermoz / Sacré-Cœur', { fee: 500, time: '20–30 min' }],
