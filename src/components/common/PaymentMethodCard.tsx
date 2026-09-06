@@ -1,7 +1,7 @@
 import React from 'react';
 import { PaymentMethod } from '../../types';
 import { useApp } from '../../context/AppContext';
-import { Banknote, CheckCircle2, ShieldCheck, Smartphone, Zap } from 'lucide-react';
+import { Banknote, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface PaymentMethodCardProps {
@@ -44,20 +44,6 @@ export const PaymentMethodCard: React.FC<PaymentMethodCardProps> = ({
           renderLogo: () => (
             <div className="w-11 h-11 rounded-2xl bg-[#FF7900] flex items-center justify-center text-white shadow-xs font-black text-sm">
               OM
-            </div>
-          ),
-        };
-      case 'mtn':
-        return {
-          title: t('paymentMtn'),
-          desc: t('paymentMtnDesc'),
-          badge: 'MoMo / Free',
-          badgeBg: 'bg-amber-100 text-amber-900',
-          bgGradient: isSelected ? 'bg-amber-50/80 border-[#FFCC00] shadow-artistic ring-2 ring-[#FFCC00]/40' : 'bg-white border-[#F0EDE8] shadow-artistic',
-          iconBg: 'bg-[#FFCC00] text-amber-950',
-          renderLogo: () => (
-            <div className="w-11 h-11 rounded-2xl bg-[#FFCC00] flex items-center justify-center text-amber-950 shadow-xs font-black text-xs">
-              <Smartphone className="w-5 h-5 text-black" />
             </div>
           ),
         };
