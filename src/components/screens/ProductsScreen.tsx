@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, ShoppingBag } from 'lucide-react';
-import { motion } from 'motion/react';
 import { useApp } from '../../context/AppContext';
 import { Product, Category } from '../../types';
 import { ProductCard } from '../common/ProductCard';
@@ -8,7 +7,7 @@ import { ProductDetailModal } from './ProductDetailModal';
 import { LanguageSelector } from '../common/LanguageSelector';
 
 export const ProductsScreen: React.FC<{ onOpenCart?: () => void }> = ({ onOpenCart }) => {
-  const { language, products: contextProducts, categories: contextCategories, cartCount, addToCart } = useApp();
+  const { language, products: contextProducts, categories: contextCategories, cartCount } = useApp();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [selected, setSelected] = useState<Product | null>(null);
