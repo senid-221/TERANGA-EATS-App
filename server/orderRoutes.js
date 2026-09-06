@@ -41,8 +41,6 @@ const productSnapshot = product => ({
 const publicOrder = row => ({ id: row.id, userId: row.user_id, customerName: row.customer_name, customerPhone: row.customer_phone, customerEmail: row.customer_email || row.delivery_address?.email || '', restaurantId: row.restaurant_id, restaurantName: row.restaurant_name, restaurantLogo: row.restaurant_logo, restaurantPhone: row.restaurant_phone, restaurantAddress: row.restaurant_address, driver: row.driver || undefined, items: Array.isArray(row.items) ? row.items : [], subtotal: Number(row.subtotal) || 0, deliveryFee: Number(row.delivery_fee) || 0, discount: Number(row.discount) || 0, promoCode: row.promo_code || undefined, total: Number(row.total) || 0, paymentMethod: row.payment_method, paymentStatus: row.payment_status, orderStatus: row.order_status, deliveryAddress: row.delivery_address || {}, estimatedDeliveryTime: row.estimated_delivery_time, deliveredAt: row.delivered_at, createdAt: row.created_at, statusHistory: Array.isArray(row.status_history) ? row.status_history : [] });
 
 export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
-  // Public, read-only catalog. It uses the server-side Supabase client so the production
-  // Vite bundle does not need to contain Supabase credentials.
   app.get('/api/catalog', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!supabase) return res.status(503).json({ ok: false, error: 'Catalog service is not configured.' });
@@ -59,24 +57,17 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
       }
       const products = (productsResult.data || []).map(productSnapshot);
       const categories = (categoriesResult.data || []).map(c => ({ id: c.id, nameFR: c.name_fr || '', nameEN: c.name_en || '', imageUrl: c.image_url || '', iconName: c.icon_name || '', sortOrder: Number(c.sort_order) || 0, dishCount: Number(c.dish_count) || 0 }));
-      const restaurants = (restaurantsResult.data || []).map(r => ({
-        id: r.id, name: r.name || '', descriptionFR: r.description_fr || '', descriptionEN: r.description_en || '', logoUrl: r.logo_url || '', coverImageUrl: r.cover_image_url || '', address: r.address || '', neighborhood: r.neighborhood || '', latitude: Number(r.latitude) || 0, longitude: Number(r.longitude) || 0, phone: r.phone || '', rating: Number(r.rating) || 0, reviewCount: Number(r.review_count) || 0, deliveryFee: Number(r.delivery_fee) || 0, estimatedDeliveryTime: r.estimated_delivery_time || r.delivery_time || '', minOrder: Number(r.min_order) || 0, isOpen: r.is_open !== false, isFeatured: r.is_featured === true, cuisineTypes: Array.isArray(r.cuisine_types) ? r.cuisine_types : [], tags: Array.isArray(r.tags) ? r.tags : [], createdAt: r.created_at || new Date().toISOString()
-      }));
+      const restaurants = (restaurantsResult.data || []).map(r => ({ id: r.id, name: r.name || '', descriptionFR: r.description_fr || '', descriptionEN: r.description_en || '', logoUrl: r.logo_url || '', coverImageUrl: r.cover_image_url || '', address: r.address || '', neighborhood: r.neighborhood || '', latitude: Number(r.latitude) || 0, longitude: Number(r.longitude) || 0, phone: r.phone || '', rating: Number(r.rating) || 0, reviewCount: Number(r.review_count) || 0, deliveryFee: Number(r.delivery_fee) || 0, estimatedDeliveryTime: r.estimated_delivery_time || r.delivery_time || '', minOrder: Number(r.min_order) || 0, isOpen: r.is_open !== false, isFeatured: r.is_featured === true, cuisineTypes: Array.isArray(r.cuisine_types) ? r.cuisine_types : [], tags: Array.isArray(r.tags) ? r.tags : [], createdAt: r.created_at || new Date().toISOString() }));
       const promotions = (promotionsResult.error ? [] : (promotionsResult.data || [])).map(p => ({ id: p.id, code: p.code || '', titleFR: p.title_fr || '', titleEN: p.title_en || '', descriptionFR: p.description_fr || '', descriptionEN: p.description_en || '', imageUrl: p.image_url || '', discountType: p.discount_type === 'fixed' ? 'fixed' : 'percentage', discountValue: Number(p.discount_value) || 0, minOrderValue: Number(p.min_order_value) || 0, startDate: p.valid_from || '', endDate: p.valid_until || '', active: p.is_active === true }));
       res.json({ ok: true, products, categories, restaurants, promotions });
-    } catch (error) {
-      console.error('Public catalog API failed:', error);
-      res.status(500).json({ ok: false, error: 'Unable to load catalog.' });
-    }
+    } catch (error) { console.error('Public catalog API failed:', error); res.status(500).json({ ok: false, error: 'Unable to load catalog.' }); }
   });
 
-  // Public, read-only branding settings. Secrets and admin settings remain protected.
   app.get('/api/app-settings', async (_req, res) => {
     if (!supabase) return res.json({ ok: true, settings: { app_name: 'TerangaEats', default_currency: 'FCFA' } });
     const { data, error } = await supabase.from('app_settings').select('key,value').in('key', ['app_name','default_currency','app_logo_url']);
     if (error) return res.json({ ok: true, settings: { app_name: 'TerangaEats', default_currency: 'FCFA' } });
-    const settings = {};
-    for (const row of data || []) settings[row.key] = typeof row.value === 'object' && row.value !== null && 'value' in row.value ? String(row.value.value ?? '') : String(row.value ?? '');
+    const settings = {}; for (const row of data || []) settings[row.key] = typeof row.value === 'object' && row.value !== null && 'value' in row.value ? String(row.value.value ?? '') : String(row.value ?? '');
     res.json({ ok: true, settings: { app_name: settings.app_name || 'TerangaEats', default_currency: settings.default_currency || 'FCFA', app_logo_url: settings.app_logo_url || '' } });
   });
 
@@ -96,8 +87,10 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
         return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(existingOrder) });
       }
 
-      const { data: restaurant, error: restaurantError } = await supabase.from('restaurants').select('id,name,logo_url,phone,address,estimated_delivery_time,is_open').eq('id', restaurantId).single();
-      if (restaurantError || !restaurant) return res.status(400).json({ ok: false, error: 'Restaurant is not available.' });
+      // Select only stable restaurant fields. This avoids breaking confirmation if an
+      // optional delivery-time column is absent in an older database schema.
+      const { data: restaurant, error: restaurantError } = await supabase.from('restaurants').select('*').eq('id', restaurantId).single();
+      if (restaurantError || !restaurant) { console.error('Restaurant lookup failed:', restaurantError); return res.status(400).json({ ok: false, error: 'Restaurant is not available.' }); }
       if (restaurant.is_open === false) return res.status(409).json({ ok: false, error: 'This restaurant is currently closed.' });
 
       const address = normalizeAddress(payload.deliveryAddress, { name, phone, email });
@@ -126,7 +119,7 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
       }
       const deliveryFee = zone.fee, total = Math.max(0, subtotal + deliveryFee - discount), now = new Date().toISOString();
       const orderId = `TE-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-      const row = { id: orderId, idempotency_key: idempotencyKey, user_id: cleanText(payload.userId, 160) || `guest-${crypto.randomUUID()}`, customer_name: name, customer_phone: phone, customer_email: email, restaurant_id: restaurantId, restaurant_name: restaurant.name, restaurant_logo: restaurant.logo_url || '', restaurant_phone: restaurant.phone || '', restaurant_address: restaurant.address || '', driver: null, items: sanitizedItems, subtotal, delivery_fee: deliveryFee, discount, promo_code: promoCode, total, payment_method: paymentMethod, payment_status: paymentMethod === 'cash_on_delivery' ? 'cash_pending' : 'pending', order_status: 'pending', delivery_address: address, status_history: [{ status: 'pending', timestamp: now, noteFR: 'Commande reçue et transmise.', noteEN: 'Order received and submitted.' }], created_at: now, estimated_delivery_time: zone.time || restaurant.estimated_delivery_time || '25–35 min' };
+      const row = { id: orderId, idempotency_key: idempotencyKey, user_id: cleanText(payload.userId, 160) || `guest-${crypto.randomUUID()}`, customer_name: name, customer_phone: phone, customer_email: email, restaurant_id: restaurantId, restaurant_name: restaurant.name, restaurant_logo: restaurant.logo_url || '', restaurant_phone: restaurant.phone || '', restaurant_address: restaurant.address || '', driver: null, items: sanitizedItems, subtotal, delivery_fee: deliveryFee, discount, promo_code: promoCode, total, payment_method: paymentMethod, payment_status: paymentMethod === 'cash_on_delivery' ? 'cash_pending' : 'pending', order_status: 'pending', delivery_address: address, status_history: [{ status: 'pending', timestamp: now, noteFR: 'Commande reçue et transmise.', noteEN: 'Order received and submitted.' }], created_at: now, estimated_delivery_time: zone.time || restaurant.estimated_delivery_time || restaurant.delivery_time || '25–35 min' };
       const { data: saved, error: insertError } = await supabase.from('orders').insert(row).select('*').single();
       if (insertError || !saved) {
         if (insertError?.code === '23505') { const { data: concurrent } = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle(); if (concurrent) { const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(concurrent, 'new_order') : false; return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(concurrent) }); } }
