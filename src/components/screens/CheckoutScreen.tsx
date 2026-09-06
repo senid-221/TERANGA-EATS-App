@@ -15,7 +15,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ onBack, onOrderS
   const [processingStep, setProcessingStep] = useState('');
   const [reviewing, setReviewing] = useState(false);
 
-  const paymentMethods: PaymentMethod[] = ['wave', 'orange_money', 'mtn', 'cash_on_delivery'];
+  const paymentMethods: PaymentMethod[] = ['wave', 'orange_money', 'cash_on_delivery'];
   const email = (deliveryAddress.email || '').trim();
   const hasCoordinates = typeof deliveryAddress.lat === 'number' && typeof deliveryAddress.lng === 'number';
   const mapsQuery = hasCoordinates ? `${deliveryAddress.lat},${deliveryAddress.lng}` : [deliveryAddress.streetAddress, deliveryAddress.buildingInfo, deliveryAddress.neighborhood].filter(Boolean).join(', ');
@@ -25,7 +25,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ onBack, onOrderS
     if (!deliveryAddress.fullName.trim() || !deliveryAddress.phone.trim() || !email || !deliveryAddress.streetAddress.trim()) {
       showToast('Veuillez renseigner le nom, WhatsApp, email et adresse de livraison.'); return false;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast('Veuillez entrer une adresse email valide.'); return false; }
+    if (!/^([^\s@]+)@([^\s@]+)\.([^\s@]+)$/.test(email)) { showToast('Veuillez entrer une adresse email valide.'); return false; }
     if (!mapsQuery) { showToast('Veuillez renseigner votre localisation de livraison.'); return false; }
     if (!cartItems.length) { showToast(language === 'fr' ? 'Votre panier est vide.' : 'Your cart is empty.'); return false; }
     return true;
