@@ -11,6 +11,7 @@ const cleanText = (value, max = 500) => String(value ?? '').trim().slice(0, max)
 const validEmail = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 const validPhone = value => { const digits = String(value || '').replace(/\D/g, ''); return digits.length >= 8 && digits.length <= 15; };
 const validIdempotencyKey = value => /^[A-Za-z0-9._:-]{16,160}$/.test(String(value || ''));
+const isMissingIdempotencyColumn = error => /idempotency_key|column .* does not exist|schema cache/i.test(String(error?.message || error || ''));
 
 const normalizeAddress = (address, customer) => {
   const a = address && typeof address === 'object' ? address : {}; const lat = Number(a.lat); const lng = Number(a.lng);
@@ -80,15 +81,22 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
       if (!name || !validPhone(phone) || !validEmail(email) || !restaurantId || !clientItems.length || !PAYMENT_METHODS.has(paymentMethod)) return res.status(400).json({ ok: false, error: 'Complete and valid customer, restaurant, items and payment information are required.' });
       if (!validIdempotencyKey(idempotencyKey)) return res.status(400).json({ ok: false, error: 'A valid idempotency key is required.' });
 
+      let idempotencySupported = true;
       const { data: existingOrder, error: existingError } = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
-      if (existingError) { console.error('Order idempotency lookup failed:', existingError); return res.status(500).json({ ok: false, error: 'Order system is not fully migrated. Run the production hardening migration.' }); }
-      if (existingOrder) {
+      if (existingError) {
+        if (isMissingIdempotencyColumn(existingError)) {
+          idempotencySupported = false;
+          console.warn('Order idempotency column is missing; continuing without idempotency protection. Run supabase/0003_production_hardening.sql.');
+        } else {
+          console.error('Order idempotency lookup failed:', existingError);
+          return res.status(500).json({ ok: false, error: 'Unable to access the order system.' });
+        }
+      }
+      if (idempotencySupported && existingOrder) {
         const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(existingOrder, 'new_order') : false;
         return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(existingOrder) });
       }
 
-      // Select only stable restaurant fields. This avoids breaking confirmation if an
-      // optional delivery-time column is absent in an older database schema.
       const { data: restaurant, error: restaurantError } = await supabase.from('restaurants').select('*').eq('id', restaurantId).single();
       if (restaurantError || !restaurant) { console.error('Restaurant lookup failed:', restaurantError); return res.status(400).json({ ok: false, error: 'Restaurant is not available.' }); }
       if (restaurant.is_open === false) return res.status(409).json({ ok: false, error: 'This restaurant is currently closed.' });
@@ -119,14 +127,15 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
       }
       const deliveryFee = zone.fee, total = Math.max(0, subtotal + deliveryFee - discount), now = new Date().toISOString();
       const orderId = `TE-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-      const row = { id: orderId, idempotency_key: idempotencyKey, user_id: cleanText(payload.userId, 160) || `guest-${crypto.randomUUID()}`, customer_name: name, customer_phone: phone, customer_email: email, restaurant_id: restaurantId, restaurant_name: restaurant.name, restaurant_logo: restaurant.logo_url || '', restaurant_phone: restaurant.phone || '', restaurant_address: restaurant.address || '', driver: null, items: sanitizedItems, subtotal, delivery_fee: deliveryFee, discount, promo_code: promoCode, total, payment_method: paymentMethod, payment_status: paymentMethod === 'cash_on_delivery' ? 'cash_pending' : 'pending', order_status: 'pending', delivery_address: address, status_history: [{ status: 'pending', timestamp: now, noteFR: 'Commande reçue et transmise.', noteEN: 'Order received and submitted.' }], created_at: now, estimated_delivery_time: zone.time || restaurant.estimated_delivery_time || restaurant.delivery_time || '25–35 min' };
+      const row = { ...(idempotencySupported ? { idempotency_key: idempotencyKey } : {}), id: orderId, user_id: cleanText(payload.userId, 160) || `guest-${crypto.randomUUID()}`, customer_name: name, customer_phone: phone, customer_email: email, restaurant_id: restaurantId, restaurant_name: restaurant.name, restaurant_logo: restaurant.logo_url || '', restaurant_phone: restaurant.phone || '', restaurant_address: restaurant.address || '', driver: null, items: sanitizedItems, subtotal, delivery_fee: deliveryFee, discount, promo_code: promoCode, total, payment_method: paymentMethod, payment_status: paymentMethod === 'cash_on_delivery' ? 'cash_pending' : 'pending', order_status: 'pending', delivery_address: address, status_history: [{ status: 'pending', timestamp: now, noteFR: 'Commande reçue et transmise.', noteEN: 'Order received and submitted.' }], created_at: now, estimated_delivery_time: zone.time || restaurant.estimated_delivery_time || restaurant.delivery_time || '25–35 min' };
       const { data: saved, error: insertError } = await supabase.from('orders').insert(row).select('*').single();
       if (insertError || !saved) {
-        if (insertError?.code === '23505') { const { data: concurrent } = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle(); if (concurrent) { const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(concurrent, 'new_order') : false; return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(concurrent) }); } }
-        console.error('Production order insert failed:', insertError); return res.status(500).json({ ok: false, error: 'Unable to save the order.' });
+        if (idempotencySupported && insertError?.code === '23505') { const { data: concurrent } = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle(); if (concurrent) { const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(concurrent, 'new_order') : false; return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(concurrent) }); } }
+        console.error('Production order insert failed:', insertError);
+        return res.status(500).json({ ok: false, error: String(insertError?.message || 'Unable to save the order.') });
       }
       const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(saved, 'new_order') : false;
       res.status(201).json({ ok: true, order: publicOrder(saved), notificationSent });
-    } catch (error) { console.error('Production order API failed:', error); res.status(500).json({ ok: false, error: 'Unable to create the order.' }); }
+    } catch (error) { console.error('Production order API failed:', error); res.status(500).json({ ok: false, error: String(error?.message || 'Unable to create the order.') }); }
   });
 };
