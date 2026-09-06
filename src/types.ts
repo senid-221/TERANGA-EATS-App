@@ -125,7 +125,7 @@ export type OrderStatus =
   | 'pending' | 'accepted' | 'preparing' | 'ready' | 'assigned'
   | 'picked_up' | 'delivering' | 'driver_arrived' | 'delivered' | 'cancelled';
 
-export type PaymentMethod = 'wave' | 'orange_money' | 'mtn' | 'cash_on_delivery';
+export type PaymentMethod = 'wave' | 'orange_money' | 'cash_on_delivery';
 export type PaymentStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'cash_pending';
 
 export interface DeliveryAddress {
