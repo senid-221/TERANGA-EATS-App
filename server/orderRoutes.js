@@ -13,6 +13,28 @@ const validPhone = value => { const digits = String(value || '').replace(/\D/g, 
 const validIdempotencyKey = value => /^[A-Za-z0-9._:-]{16,160}$/.test(String(value || ''));
 const isMissingIdempotencyColumn = error => /idempotency_key|column .* does not exist|schema cache/i.test(String(error?.message || error || ''));
 
+const paymentReadiness = method => {
+  if (method === 'cash_on_delivery') return { ready: true, provider: 'cash_on_delivery', missing: [] };
+  if (method === 'wave') {
+    const missing = [];
+    if (!process.env.WAVE_API_KEY) missing.push('WAVE_API_KEY');
+    if (!process.env.WAVE_API_BASE_URL) missing.push('WAVE_API_BASE_URL');
+    if (!process.env.WAVE_PAYMENT_ENDPOINT) missing.push('WAVE_PAYMENT_ENDPOINT');
+    if (!process.env.WAVE_WEBHOOK_SECRET) missing.push('WAVE_WEBHOOK_SECRET');
+    return { ready: missing.length === 0, provider: 'wave', missing };
+  }
+  if (method === 'orange_money') {
+    const missing = [];
+    if (!process.env.ORANGE_MONEY_CLIENT_ID) missing.push('ORANGE_MONEY_CLIENT_ID');
+    if (!process.env.ORANGE_MONEY_CLIENT_SECRET) missing.push('ORANGE_MONEY_CLIENT_SECRET');
+    if (!process.env.ORANGE_MONEY_API_BASE_URL) missing.push('ORANGE_MONEY_API_BASE_URL');
+    if (!process.env.ORANGE_MONEY_PAYMENT_ENDPOINT) missing.push('ORANGE_MONEY_PAYMENT_ENDPOINT');
+    if (!process.env.ORANGE_MONEY_WEBHOOK_SECRET) missing.push('ORANGE_MONEY_WEBHOOK_SECRET');
+    return { ready: missing.length === 0, provider: 'orange_money', missing };
+  }
+  return { ready: false, provider: method, missing: ['unsupported_payment_method'] };
+};
+
 const normalizeAddress = (address, customer) => {
   const a = address && typeof address === 'object' ? address : {}; const lat = Number(a.lat); const lng = Number(a.lng);
   return { fullName: cleanText(a.fullName || customer.name, 120), phone: cleanText(a.phone || customer.phone, 40), email: cleanText(a.email || customer.email, 160) || undefined,
@@ -42,6 +64,14 @@ const productSnapshot = product => ({
 const publicOrder = row => ({ id: row.id, userId: row.user_id, customerName: row.customer_name, customerPhone: row.customer_phone, customerEmail: row.customer_email || row.delivery_address?.email || '', restaurantId: row.restaurant_id, restaurantName: row.restaurant_name, restaurantLogo: row.restaurant_logo, restaurantPhone: row.restaurant_phone, restaurantAddress: row.restaurant_address, driver: row.driver || undefined, items: Array.isArray(row.items) ? row.items : [], subtotal: Number(row.subtotal) || 0, deliveryFee: Number(row.delivery_fee) || 0, discount: Number(row.discount) || 0, promoCode: row.promo_code || undefined, total: Number(row.total) || 0, paymentMethod: row.payment_method, paymentStatus: row.payment_status, orderStatus: row.order_status, deliveryAddress: row.delivery_address || {}, estimatedDeliveryTime: row.estimated_delivery_time, deliveredAt: row.delivered_at, createdAt: row.created_at, statusHistory: Array.isArray(row.status_history) ? row.status_history : [] });
 
 export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
+  app.get('/api/payments/readiness', async (req, res) => {
+    const method = cleanText(req.query?.method, 40);
+    if (!PAYMENT_METHODS.has(method)) return res.status(400).json({ ok: false, error: 'Unsupported payment method.' });
+    const readiness = paymentReadiness(method);
+    if (!readiness.ready) return res.status(503).json({ ok: false, paymentReady: false, provider: readiness.provider, missing: readiness.missing, error: `Payment provider is not configured. Missing: ${readiness.missing.join(', ')}` });
+    res.json({ ok: true, paymentReady: true, provider: readiness.provider });
+  });
+
   app.get('/api/catalog', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!supabase) return res.status(503).json({ ok: false, error: 'Catalog service is not configured.' });
@@ -52,10 +82,7 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
         supabase.from('restaurants').select('*').order('created_at', { ascending: false }),
         supabase.from('promotions').select('*').eq('is_active', true).or('valid_until.is.null,valid_until.gte.' + new Date().toISOString()).order('created_at', { ascending: false })
       ]);
-      if (productsResult.error || categoriesResult.error || restaurantsResult.error) {
-        console.error('Public catalog query failed:', productsResult.error || categoriesResult.error || restaurantsResult.error);
-        return res.status(500).json({ ok: false, error: 'Unable to load catalog.' });
-      }
+      if (productsResult.error || categoriesResult.error || restaurantsResult.error) return res.status(500).json({ ok: false, error: 'Unable to load catalog.' });
       const products = (productsResult.data || []).map(productSnapshot);
       const categories = (categoriesResult.data || []).map(c => ({ id: c.id, nameFR: c.name_fr || '', nameEN: c.name_en || '', imageUrl: c.image_url || '', iconName: c.icon_name || '', sortOrder: Number(c.sort_order) || 0, dishCount: Number(c.dish_count) || 0 }));
       const restaurants = (restaurantsResult.data || []).map(r => ({ id: r.id, name: r.name || '', descriptionFR: r.description_fr || '', descriptionEN: r.description_en || '', logoUrl: r.logo_url || '', coverImageUrl: r.cover_image_url || '', address: r.address || '', neighborhood: r.neighborhood || '', latitude: Number(r.latitude) || 0, longitude: Number(r.longitude) || 0, phone: r.phone || '', rating: Number(r.rating) || 0, reviewCount: Number(r.review_count) || 0, deliveryFee: Number(r.delivery_fee) || 0, estimatedDeliveryTime: r.estimated_delivery_time || r.delivery_time || '', minOrder: Number(r.min_order) || 0, isOpen: r.is_open !== false, isFeatured: r.is_featured === true, cuisineTypes: Array.isArray(r.cuisine_types) ? r.cuisine_types : [], tags: Array.isArray(r.tags) ? r.tags : [], createdAt: r.created_at || new Date().toISOString() }));
@@ -80,33 +107,21 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
       const clientItems = Array.isArray(payload.items) ? payload.items.slice(0, 50) : []; const idempotencyKey = cleanText(req.headers['x-idempotency-key'] || payload.idempotencyKey, 160);
       if (!name || !validPhone(phone) || !validEmail(email) || !restaurantId || !clientItems.length || !PAYMENT_METHODS.has(paymentMethod)) return res.status(400).json({ ok: false, error: 'Complete and valid customer, restaurant, items and payment information are required.' });
       if (!validIdempotencyKey(idempotencyKey)) return res.status(400).json({ ok: false, error: 'A valid idempotency key is required.' });
+      const readiness = paymentReadiness(paymentMethod);
+      if (!readiness.ready) return res.status(503).json({ ok: false, code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', paymentReady: false, provider: readiness.provider, missing: readiness.missing, error: `Paiement ${readiness.provider} ntirateguwe neza. Birabura: ${readiness.missing.join(', ')}` });
 
       let idempotencySupported = true;
       const { data: existingOrder, error: existingError } = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
-      if (existingError) {
-        if (isMissingIdempotencyColumn(existingError)) {
-          idempotencySupported = false;
-          console.warn('Order idempotency column is missing; continuing without idempotency protection. Run supabase/0003_production_hardening.sql.');
-        } else {
-          console.error('Order idempotency lookup failed:', existingError);
-          return res.status(500).json({ ok: false, error: 'Unable to access the order system.' });
-        }
-      }
-      if (idempotencySupported && existingOrder) {
-        const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(existingOrder, 'new_order') : false;
-        return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(existingOrder) });
-      }
+      if (existingError) { if (isMissingIdempotencyColumn(existingError)) { idempotencySupported = false; console.warn('Order idempotency column is missing; continuing without idempotency protection.'); } else return res.status(500).json({ ok: false, error: 'Unable to access the order system.' }); }
+      if (idempotencySupported && existingOrder) return res.status(200).json({ ok: true, duplicate: true, notificationSent: false, order: publicOrder(existingOrder) });
 
       const { data: restaurant, error: restaurantError } = await supabase.from('restaurants').select('*').eq('id', restaurantId).single();
-      if (restaurantError || !restaurant) { console.error('Restaurant lookup failed:', restaurantError); return res.status(400).json({ ok: false, error: 'Restaurant is not available.' }); }
+      if (restaurantError || !restaurant) return res.status(400).json({ ok: false, error: 'Restaurant is not available.' });
       if (restaurant.is_open === false) return res.status(409).json({ ok: false, error: 'This restaurant is currently closed.' });
-
       const address = normalizeAddress(payload.deliveryAddress, { name, phone, email });
       if (!address.streetAddress || !address.neighborhood) return res.status(400).json({ ok: false, error: 'Delivery address is required.' });
       const zone = DELIVERY_ZONES.get(address.neighborhood); if (!zone) return res.status(400).json({ ok: false, error: 'This delivery neighborhood is not supported.' });
-
       const productIds = [...new Set(clientItems.map(item => cleanText(item?.productId, 120)).filter(Boolean))];
-      if (!productIds.length || productIds.length > 50) return res.status(400).json({ ok: false, error: 'Order contains invalid products.' });
       const { data: products, error: productError } = await supabase.from('products').select('*').in('id', productIds);
       if (productError) return res.status(500).json({ ok: false, error: 'Unable to validate order products.' });
       const productMap = new Map((products || []).map(p => [p.id, p])); const sanitizedItems = []; let subtotal = 0;
@@ -117,25 +132,15 @@ export const registerOrderRoutes = (app, { supabase, notifyWhatsApp }) => {
         const snapshot = productSnapshot(product), unitPrice = snapshot.price + optionResult.price, totalPrice = unitPrice * quantity; subtotal += totalPrice;
         sanitizedItems.push({ id: cleanText(item?.id, 160) || `item-${crypto.randomUUID()}`, productId, product: snapshot, restaurantId, restaurantName: restaurant.name, quantity, selectedOptions: optionResult.options, specialInstructions: cleanText(item?.specialInstructions, 500) || undefined, unitPrice, totalPrice });
       }
-
       let discount = 0, promoCode = null; const requestedPromo = cleanText(payload.promoCode, 80).toUpperCase();
-      if (requestedPromo) {
-        const { data: promo } = await supabase.from('promotions').select('*').eq('code', requestedPromo).eq('is_active', true).single();
-        if (promo && (!promo.valid_until || new Date(promo.valid_until).getTime() >= Date.now()) && subtotal >= Number(promo.min_order_value || 0)) {
-          promoCode = promo.code; discount = promo.discount_type === 'fixed' ? Math.min(subtotal, Math.round(Number(promo.discount_value) || 0)) : Math.min(subtotal, Math.round(subtotal * (Number(promo.discount_value) || 0) / 100));
-        }
-      }
+      if (requestedPromo) { const { data: promo } = await supabase.from('promotions').select('*').eq('code', requestedPromo).eq('is_active', true).single(); if (promo && (!promo.valid_until || new Date(promo.valid_until).getTime() >= Date.now()) && subtotal >= Number(promo.min_order_value || 0)) { promoCode = promo.code; discount = promo.discount_type === 'fixed' ? Math.min(subtotal, Math.round(Number(promo.discount_value) || 0)) : Math.min(subtotal, Math.round(subtotal * (Number(promo.discount_value) || 0) / 100)); } }
       const deliveryFee = zone.fee, total = Math.max(0, subtotal + deliveryFee - discount), now = new Date().toISOString();
       const orderId = `TE-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-      const row = { ...(idempotencySupported ? { idempotency_key: idempotencyKey } : {}), id: orderId, user_id: cleanText(payload.userId, 160) || `guest-${crypto.randomUUID()}`, customer_name: name, customer_phone: phone, customer_email: email, restaurant_id: restaurantId, restaurant_name: restaurant.name, restaurant_logo: restaurant.logo_url || '', restaurant_phone: restaurant.phone || '', restaurant_address: restaurant.address || '', driver: null, items: sanitizedItems, subtotal, delivery_fee: deliveryFee, discount, promo_code: promoCode, total, payment_method: paymentMethod, payment_status: paymentMethod === 'cash_on_delivery' ? 'cash_pending' : 'pending', order_status: 'pending', delivery_address: address, status_history: [{ status: 'pending', timestamp: now, noteFR: 'Commande reçue et transmise.', noteEN: 'Order received and submitted.' }], created_at: now, estimated_delivery_time: zone.time || restaurant.estimated_delivery_time || restaurant.delivery_time || '25–35 min' };
+      const row = { ...(idempotencySupported ? { idempotency_key: idempotencyKey } : {}), id: orderId, user_id: cleanText(payload.userId, 120) || null, customer_name: name, customer_phone: phone, customer_email: email, restaurant_id: restaurantId, restaurant_name: restaurant.name, restaurant_logo: restaurant.logo_url || null, restaurant_phone: restaurant.phone || null, restaurant_address: restaurant.address || null, driver: null, items: sanitizedItems, subtotal, delivery_fee: deliveryFee, discount, promo_code: promoCode, total, payment_method: paymentMethod, payment_status: paymentMethod === 'cash_on_delivery' ? 'cash_pending' : 'pending', order_status: 'pending', delivery_address: address, status_history: [{ status: 'pending', timestamp: now, noteFR: 'Commande créée', noteEN: 'Order created' }], created_at: now, estimated_delivery_time: zone.time };
       const { data: saved, error: insertError } = await supabase.from('orders').insert(row).select('*').single();
-      if (insertError || !saved) {
-        if (idempotencySupported && insertError?.code === '23505') { const { data: concurrent } = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle(); if (concurrent) { const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(concurrent, 'new_order') : false; return res.status(200).json({ ok: true, duplicate: true, notificationSent, order: publicOrder(concurrent) }); } }
-        console.error('Production order insert failed:', insertError);
-        return res.status(500).json({ ok: false, error: String(insertError?.message || 'Unable to save the order.') });
-      }
+      if (insertError || !saved) return res.status(500).json({ ok: false, error: String(insertError?.message || 'Unable to save the order.') });
       const notificationSent = typeof notifyWhatsApp === 'function' ? await notifyWhatsApp(saved, 'new_order') : false;
-      res.status(201).json({ ok: true, order: publicOrder(saved), notificationSent });
-    } catch (error) { console.error('Production order API failed:', error); res.status(500).json({ ok: false, error: String(error?.message || 'Unable to create the order.') }); }
+      res.status(201).json({ ok: true, notificationSent, order: publicOrder(saved) });
+    } catch (error) { console.error('Create order API failed:', error); res.status(500).json({ ok: false, error: String(error?.message || 'Unable to create order.') }); }
   });
 };
