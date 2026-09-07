@@ -74,11 +74,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const orderIdempotencyKey = useRef<string | null>(null);
   const createOrder=async(paymentMethod:PaymentMethod)=>{
     const first=cartItems[0]; if(!first) throw new Error('Cart is empty.');
-    const restaurant=restaurants.find(r=>r.id===first.restaurantId)||restaurants[0]; if(!restaurant) throw new Error('Restaurant is not available.');
+    const restaurantId = first.restaurantId || restaurants.find(r => r.id === first.restaurantId)?.id || restaurants[0]?.id;
+    if(!restaurantId) throw new Error('Restaurant is not available.');
     const customer={name:deliveryAddress.fullName||currentUser.fullName,phone:deliveryAddress.phone||currentUser.phone,email:deliveryAddress.email||currentUser.email};
     if(!customer.name||!customer.phone||!customer.email||!deliveryAddress.streetAddress||!deliveryAddress.neighborhood) throw new Error('Customer and delivery information are required.');
     if(!orderIdempotencyKey.current) orderIdempotencyKey.current = crypto.randomUUID();
-    const response=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json','X-Idempotency-Key':orderIdempotencyKey.current},credentials:'include',body:JSON.stringify({userId:currentUser.id||undefined,restaurantId:restaurant.id,items:cartItems,deliveryFee:cartDeliveryFee,promoCode:appliedPromo||undefined,paymentMethod,deliveryAddress:{...deliveryAddress,email:customer.email},customer})});
+    const response=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json','X-Idempotency-Key':orderIdempotencyKey.current},credentials:'include',body:JSON.stringify({userId:currentUser.id||undefined,restaurantId,items:cartItems,deliveryFee:cartDeliveryFee,promoCode:appliedPromo||undefined,paymentMethod,deliveryAddress:{...deliveryAddress,email:customer.email},customer})});
     const result=await response.json().catch(()=>({})); if(!response.ok||!result.ok||!result.order) throw new Error(String(result.error||'Unable to create order.'));
     const savedOrder=result.order as Order; orderIdempotencyKey.current=null; setOrders(prev=>[savedOrder,...prev.filter(o=>o.id!==savedOrder.id)]); clearCart(); setSelectedOrderId(savedOrder.id);
     addNotification({userId:savedOrder.userId,titleFR:'Commande Confirmée ! 🛵',titleEN:'Order Confirmed! 🛵',messageFR:`Votre commande ${savedOrder.id} est en cours.`,messageEN:`Your order ${savedOrder.id} is in progress.`,type:'order',orderId:savedOrder.id});
