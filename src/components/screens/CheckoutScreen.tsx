@@ -2,52 +2,97 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Primary3DButton } from '../common/Primary3DButton';
 import { DeliveryAddressCard } from '../common/DeliveryAddressCard';
-import { PaymentMethodCard } from '../common/PaymentMethodCard';
-import { ArrowLeft, CheckCircle2, ChevronRight, Lock, MapPin, ShieldCheck } from 'lucide-react';
-import { PaymentMethod } from '../../types';
+import { ArrowLeft, ChevronRight, MapPin, MessageCircle, ShieldCheck } from 'lucide-react';
 
 interface CheckoutScreenProps { onBack: () => void; onOrderSuccess: (orderId: string) => void; }
 
+const SELLER_WHATSAPP = '221775784158';
+const SELLER_NAME = 'Teranga Eats Ltd';
+
 export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ onBack, onOrderSuccess }) => {
-  const { t, language, cartItems, cartSubtotal, cartDeliveryFee, cartDiscount, cartTotal, deliveryAddress, createOrder, showToast } = useApp();
-  const [paymentMethod] = useState<PaymentMethod>('cash_on_delivery');
+  const { t, language, cartItems, cartSubtotal, cartDeliveryFee, cartDiscount, cartTotal, deliveryAddress, showToast } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingStep, setProcessingStep] = useState('');
   const [reviewing, setReviewing] = useState(false);
 
-  const paymentMethods: PaymentMethod[] = ['cash_on_delivery'];
   const email = (deliveryAddress.email || '').trim();
-  const hasCoordinates = typeof deliveryAddress.lat === 'number' && typeof deliveryAddress.lng === 'number';
-  const mapsQuery = hasCoordinates ? `${deliveryAddress.lat},${deliveryAddress.lng}` : [deliveryAddress.streetAddress, deliveryAddress.buildingInfo, deliveryAddress.neighborhood].filter(Boolean).join(', ');
-  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsQuery || 'Dakar')}`;
+  const mapsQuery = [deliveryAddress.streetAddress, deliveryAddress.buildingInfo, deliveryAddress.neighborhood].filter(Boolean).join(', ');
+  const hasGps = typeof deliveryAddress.lat === 'number' && typeof deliveryAddress.lng === 'number';
+  const googleMapsUrl = hasGps
+    ? `https://www.google.com/maps/search/?api=1&query=${deliveryAddress.lat},${deliveryAddress.lng}`
+    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsQuery || 'Dakar')}`;
 
   const validateCheckout = () => {
-    if (!deliveryAddress.fullName.trim() || !deliveryAddress.phone.trim() || !email || !deliveryAddress.streetAddress.trim()) {
-      showToast('Veuillez renseigner le nom, WhatsApp, email et adresse de livraison.'); return false;
+    if (!deliveryAddress.fullName.trim() || !deliveryAddress.phone.trim() || !deliveryAddress.streetAddress.trim()) {
+      showToast(language === 'fr' ? 'Veuillez renseigner votre nom, téléphone et adresse.' : 'Please enter your name, phone number and address.');
+      return false;
     }
-    if (!/^([^\s@]+)@([^\s@]+)\.([^\s@]+)$/.test(email)) { showToast('Veuillez entrer une adresse email valide.'); return false; }
-    if (!mapsQuery) { showToast('Veuillez renseigner votre localisation de livraison.'); return false; }
-    if (!cartItems.length) { showToast(language === 'fr' ? 'Votre panier est vide.' : 'Your cart is empty.'); return false; }
+    if (email && !/^([^\s@]+)@([^\s@]+)\.([^\s@]+)$/.test(email)) {
+      showToast(language === 'fr' ? 'Veuillez entrer une adresse email valide.' : 'Please enter a valid email address.');
+      return false;
+    }
+    if (!deliveryAddress.neighborhood.trim()) {
+      showToast(language === 'fr' ? 'Veuillez choisir votre zone à Dakar.' : 'Please choose your Dakar area.');
+      return false;
+    }
+    if (!mapsQuery && !hasGps) {
+      showToast(language === 'fr' ? 'Veuillez renseigner votre localisation.' : 'Please enter your delivery location.');
+      return false;
+    }
+    if (!cartItems.length) {
+      showToast(language === 'fr' ? 'Votre panier est vide.' : 'Your cart is empty.');
+      return false;
+    }
     return true;
   };
 
-  const handleReview = () => { if (validateCheckout()) setReviewing(true); };
+  const buildWhatsAppMessage = () => {
+    const items = cartItems.map((item) => {
+      const name = language === 'fr' ? item.product.nameFR : item.product.nameEN;
+      const options = item.selectedOptions?.length
+        ? ` (${item.selectedOptions.map((o) => o.choiceName).join(', ')})`
+        : '';
+      return `• ${item.quantity}x ${name}${options} — ${item.totalPrice.toLocaleString()} FCFA`;
+    }).join('\n');
 
-  const handleConfirmOrder = async () => {
-    if (!validateCheckout()) { setReviewing(false); return; }
-    if (isProcessing) return;
+    return [
+      `Bonjour ${SELLER_NAME},`,
+      '',
+      '🛍️ NOUVELLE COMMANDE TERANGA EATS',
+      '',
+      `👤 Nom : ${deliveryAddress.fullName.trim()}`,
+      `📱 Téléphone / WhatsApp : ${deliveryAddress.phone.trim()}`,
+      email ? `✉️ Email : ${email}` : '',
+      `📍 Zone : ${deliveryAddress.neighborhood}`,
+      `🏠 Adresse : ${deliveryAddress.streetAddress.trim()}`,
+      deliveryAddress.buildingInfo?.trim() ? `🏢 Bâtiment / Repère : ${deliveryAddress.buildingInfo.trim()}` : '',
+      deliveryAddress.instructions?.trim() ? `📝 Consigne : ${deliveryAddress.instructions.trim()}` : '',
+      `🗺️ Google Maps : ${googleMapsUrl}`,
+      '',
+      '🍽️ PRODUITS :',
+      items,
+      '',
+      `Sous-total : ${cartSubtotal.toLocaleString()} FCFA`,
+      `Livraison : ${cartDeliveryFee.toLocaleString()} FCFA`,
+      cartDiscount > 0 ? `Réduction : -${cartDiscount.toLocaleString()} FCFA` : '',
+      `💰 Total : ${cartTotal.toLocaleString()} FCFA`,
+      '',
+      '💬 Paiement : négociation directement sur WhatsApp.',
+      '',
+      'Merci. Je souhaite confirmer cette commande et discuter du paiement et de la livraison.'
+    ].filter(Boolean).join('\n');
+  };
+
+  const handleConfirmOrder = () => {
+    if (!validateCheckout() || isProcessing) return;
     setIsProcessing(true);
     try {
-      setProcessingStep(language === 'fr' ? 'Envoi de la commande…' : 'Sending your order…');
-      const order = await createOrder('cash_on_delivery');
-      showToast(t('orderConfirmed'));
-      onOrderSuccess(order.id);
-    } catch (error) {
-      console.error('Cash order creation failed:', error);
-      showToast(error instanceof Error ? error.message : 'Impossible de confirmer la commande. Veuillez réessayer.');
+      const message = buildWhatsAppMessage();
+      const url = `https://wa.me/${SELLER_WHATSAPP}?text=${encodeURIComponent(message)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      showToast(language === 'fr' ? 'Ouverture de WhatsApp pour finaliser la commande.' : 'Opening WhatsApp to finalize your order.');
+      onOrderSuccess(`whatsapp-${Date.now()}`);
     } finally {
-      setIsProcessing(false);
-      setProcessingStep('');
+      window.setTimeout(() => setIsProcessing(false), 1200);
     }
   };
 
@@ -57,13 +102,13 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ onBack, onOrderS
         <div className="flex items-center justify-between">
           <button onClick={() => setReviewing(false)} disabled={isProcessing} className="w-11 h-11 rounded-2xl bg-white text-[#2D2D2D] flex items-center justify-center shadow-artistic border border-[#F0EDE8] cursor-pointer active:scale-95 transition-all"><ArrowLeft className="w-5 h-5" /></button>
           <div className="text-center"><p className="text-[10px] font-black text-[#006633] uppercase tracking-widest">2 / 2</p><h2 className="font-heading font-black text-lg sm:text-xl text-[#2D2D2D]">{language === 'fr' ? 'Confirmer la commande' : 'Confirm your order'}</h2></div>
-          <ShieldCheck className="w-6 h-6 text-[#006633]" />
+          <MessageCircle className="w-6 h-6 text-[#006633]" />
         </div>
 
         <div className="bg-[#006633] text-white rounded-[30px] p-5 shadow-artistic">
-          <p className="text-xs font-bold opacity-80">{language === 'fr' ? 'Total à régler' : 'Total to pay'}</p>
+          <p className="text-xs font-bold opacity-80">{language === 'fr' ? 'Total de la commande' : 'Order total'}</p>
           <p className="font-heading text-3xl font-black mt-1">{cartTotal.toLocaleString()} FCFA</p>
-          <p className="text-[11px] mt-1 opacity-80">{language === 'fr' ? 'Paiement à la livraison' : 'Pay on delivery'}</p>
+          <p className="text-[11px] mt-1 opacity-80">{language === 'fr' ? 'Paiement à négocier sur WhatsApp' : 'Payment negotiated on WhatsApp'}</p>
         </div>
 
         <section className="bg-white rounded-[30px] p-5 border border-[#F0EDE8] shadow-artistic space-y-4">
@@ -73,18 +118,17 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ onBack, onOrderS
         </section>
 
         <section className="bg-white rounded-[30px] p-5 border border-[#F0EDE8] shadow-artistic space-y-3">
-          <h3 className="font-black text-sm">{language === 'fr' ? 'Livraison' : 'Delivery'}</h3>
-          <div className="flex gap-3 text-xs"><MapPin className="w-4 h-4 text-[#006633] shrink-0" /><div><p className="font-bold text-[#2D2D2D]">{deliveryAddress.fullName} • {deliveryAddress.phone}</p><p className="text-gray-500 mt-1">{deliveryAddress.neighborhood} — {deliveryAddress.streetAddress}</p>{deliveryAddress.buildingInfo&&<p className="text-gray-500">{deliveryAddress.buildingInfo}</p>}<a href={googleMapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-2 font-black text-[#006633]">Voir sur Google Maps <ChevronRight className="w-3 h-3" /></a></div></div>
+          <h3 className="font-black text-sm">{language === 'fr' ? 'Informations du client' : 'Customer information'}</h3>
+          <div className="flex gap-3 text-xs"><MapPin className="w-4 h-4 text-[#006633] shrink-0" /><div><p className="font-bold text-[#2D2D2D]">{deliveryAddress.fullName} • {deliveryAddress.phone}</p><p className="text-gray-500 mt-1">{deliveryAddress.neighborhood} — {deliveryAddress.streetAddress}</p>{email&&<p className="text-gray-500">{email}</p>}{deliveryAddress.buildingInfo&&<p className="text-gray-500">{deliveryAddress.buildingInfo}</p>}<a href={googleMapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-2 font-black text-[#006633]">Voir sur Google Maps <ChevronRight className="w-3 h-3" /></a></div></div>
         </section>
 
-        <section className="bg-white rounded-[30px] p-5 border border-[#F0EDE8] shadow-artistic">
-          <h3 className="font-black text-sm mb-3">{language === 'fr' ? 'Mode de paiement' : 'Payment method'}</h3>
-          <PaymentMethodCard method="cash_on_delivery" isSelected onSelect={() => undefined} />
-          <p className="text-[10px] text-gray-400 mt-3">{language === 'fr' ? 'Vous paierez le montant exact au livreur.' : 'Pay the exact amount to the delivery driver.'}</p>
-        </section>
+        <div className="bg-emerald-50 rounded-[28px] p-5 border border-emerald-200 text-sm text-[#006633] font-bold space-y-2">
+          <p>💬 {language === 'fr' ? `La commande sera envoyée à ${SELLER_NAME} sur WhatsApp.` : `Your order will be sent to ${SELLER_NAME} on WhatsApp.`}</p>
+          <p className="text-xs font-medium">{language === 'fr' ? 'Le paiement et les détails de livraison seront négociés directement avec le vendeur.' : 'Payment and delivery details will be negotiated directly with the seller.'}</p>
+        </div>
 
-        <Primary3DButton id="btn-confirm-order-final" onClick={handleConfirmOrder} loading={isProcessing} size="lg" icon={<Lock className="w-4 h-4" />}>
-          {isProcessing ? processingStep || 'Traitement…' : language === 'fr' ? 'Confirmer la commande' : 'Confirm order'}
+        <Primary3DButton id="btn-confirm-order-final" onClick={handleConfirmOrder} loading={isProcessing} size="lg" icon={<MessageCircle className="w-4 h-4" />}>
+          {isProcessing ? (language === 'fr' ? 'Ouverture de WhatsApp…' : 'Opening WhatsApp…') : (language === 'fr' ? 'Commander sur WhatsApp' : 'Order on WhatsApp')}
         </Primary3DButton>
       </div>
     );
@@ -93,11 +137,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ onBack, onOrderS
   return (
     <div id="checkout-screen" className="min-h-screen bg-[#FDFBF7] pb-28 max-w-2xl mx-auto p-4 sm:p-6 space-y-5">
       <div className="flex items-center justify-between"><button onClick={onBack} className="w-11 h-11 rounded-2xl bg-white text-[#2D2D2D] flex items-center justify-center shadow-artistic border border-[#F0EDE8] cursor-pointer hover:bg-gray-50 active:scale-95 transition-all"><ArrowLeft className="w-5 h-5" /></button><div className="text-center"><p className="text-[10px] font-black text-[#006633] uppercase tracking-widest">1 / 2</p><h2 className="font-heading font-black text-lg sm:text-xl text-[#2D2D2D]">{t('checkoutTitle')}</h2></div><div className="flex items-center gap-1.5 text-[11px] font-black text-[#006633] bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200"><ShieldCheck className="w-4 h-4" /><span>SSL 256-bit</span></div></div>
+      <div className="bg-white rounded-[28px] p-4 border border-[#F0EDE8] shadow-artistic"><div className="flex items-start gap-3"><div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center shrink-0"><MessageCircle className="w-5 h-5 text-[#006633]" /></div><div className="min-w-0 flex-1"><p className="font-black text-sm text-[#2D2D2D]">{language === 'fr' ? 'Commande par WhatsApp' : 'WhatsApp ordering'}</p><p className="text-xs text-gray-500 mt-1">{language === 'fr' ? `Après vos réponses, votre commande sera envoyée à ${SELLER_NAME}.` : `After your answers, your order will be sent to ${SELLER_NAME}.`}</p></div></div></div>
       <DeliveryAddressCard />
-      <div className="bg-white rounded-[28px] p-4 border border-[#F0EDE8] shadow-artistic"><div className="flex items-start gap-3"><div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center shrink-0"><MapPin className="w-5 h-5 text-[#006633]" /></div><div className="min-w-0 flex-1"><p className="font-black text-sm text-[#2D2D2D]">Localisation de livraison</p><p className="text-xs text-gray-500 mt-1 truncate">{hasCoordinates ? 'Position GPS exacte enregistrée' : mapsQuery || 'Adresse à renseigner'}</p><a href={googleMapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 mt-3 text-xs font-black text-[#006633] hover:underline"><MapPin className="w-3.5 h-3.5" /> Voir la position sur Google Maps</a></div>{hasCoordinates && <CheckCircle2 className="w-5 h-5 text-[#006633] shrink-0" />}</div></div>
-      <div className="bg-white rounded-[32px] p-5 sm:p-6 border border-[#F0EDE8] shadow-artistic space-y-3"><div className="flex items-center justify-between pb-3 border-b border-[#F0EDE8]"><div><h4 className="font-bold text-sm text-[#2D2D2D]">{t('stepPayment')}</h4><p className="text-xs text-gray-500">{language === 'fr' ? 'Paiement à la livraison' : 'Cash on delivery'}</p></div><span className="text-[10px] font-black text-[#006633] bg-[#006633]/10 px-2.5 py-1 rounded-full uppercase tracking-wider">Cash on Delivery</span></div><div className="space-y-2.5"><PaymentMethodCard method="cash_on_delivery" isSelected onSelect={() => undefined} /></div></div>
       <div className="bg-white rounded-[32px] p-5 sm:p-6 border border-[#F0EDE8] shadow-artistic space-y-3"><h4 className="font-bold text-sm text-[#2D2D2D] pb-3 border-b border-[#F0EDE8]">{t('orderSummary')}</h4><div className="space-y-2 text-xs">{cartItems.map(item => <div key={item.id} className="flex justify-between items-center text-gray-700"><span className="truncate max-w-[240px] font-medium text-[#2D2D2D]">{item.quantity}x {language==='fr'?item.product.nameFR:item.product.nameEN}</span><span className="font-bold text-[#2D2D2D]">{item.totalPrice.toLocaleString()} FCFA</span></div>)}</div><div className="pt-3 border-t border-[#F0EDE8] space-y-1.5 text-xs text-gray-500 font-medium"><div className="flex justify-between"><span>{t('subtotal')}</span><span className="font-bold text-[#2D2D2D]">{cartSubtotal.toLocaleString()} FCFA</span></div><div className="flex justify-between"><span>{t('deliveryFee')} ({deliveryAddress.neighborhood})</span><span className="font-bold text-[#2D2D2D]">{cartDeliveryFee.toLocaleString()} FCFA</span></div>{cartDiscount>0&&<div className="flex justify-between text-[#006633] font-black"><span>{t('discount')}</span><span>-{cartDiscount.toLocaleString()} FCFA</span></div>}<div className="pt-3 border-t border-[#F0EDE8] flex justify-between items-baseline"><span className="font-heading font-black text-base text-[#2D2D2D]">{t('total')}</span><span className="font-heading font-black text-xl sm:text-2xl text-[#006633]">{cartTotal.toLocaleString()} FCFA</span></div></div></div>
-      <Primary3DButton id="btn-review-order" onClick={handleReview} size="lg" icon={<ChevronRight className="w-4 h-4" />}>{language === 'fr' ? 'Vérifier la commande' : 'Review order'}</Primary3DButton>
+      <Primary3DButton id="btn-review-order" onClick={() => { if (validateCheckout()) setReviewing(true); }} size="lg" icon={<ChevronRight className="w-4 h-4" />}>{language === 'fr' ? 'Vérifier la commande' : 'Review order'}</Primary3DButton>
     </div>
   );
 };
