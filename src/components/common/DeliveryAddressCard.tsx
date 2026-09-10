@@ -3,6 +3,8 @@ import { useApp } from '../../context/AppContext';
 import { DAKAR_NEIGHBORHOODS } from '../../data/constants';
 import { ArrowRight, Check, Locate, MapPin, MessageCircle, Phone, Send, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
+import { AdvancedMarker, Map } from '@vis.gl/react-google-maps';
+import { GoogleMapsWrapper } from '../maps/GoogleMapsWrapper';
 
 interface DeliveryAddressCardProps { onAddressChange?: () => void; }
 
@@ -17,6 +19,8 @@ const QUESTIONS: Array<{ key: QuestionKey; required?: boolean }> = [
   { key: 'building' },
   { key: 'instructions' },
 ];
+
+const DAKAR_CENTER = { lat: 14.7167, lng: -17.4677 };
 
 export const DeliveryAddressCard: React.FC<DeliveryAddressCardProps> = () => {
   const { deliveryAddress, setDeliveryAddress, setCurrentNeighborhood, language, t } = useApp();
@@ -103,14 +107,28 @@ export const DeliveryAddressCard: React.FC<DeliveryAddressCardProps> = () => {
     if (!isLast) setStep((s) => s + 1);
   };
 
+  const setExactLocation = (lat: number, lng: number) => {
+    setDeliveryAddress((prev) => ({
+      ...prev,
+      lat,
+      lng,
+      instructions: prev.instructions || 'Position GPS exacte transmise au vendeur.'
+    }));
+    setGpsSuccess(true);
+    window.setTimeout(() => setGpsSuccess(false), 3000);
+  };
+
   const handleGpsDetect = () => {
     setGpsError('');
-    if (!navigator.geolocation) { setGpsError(language === 'fr' ? 'La géolocalisation n’est pas disponible.' : 'GPS ntabwo iboneka kuri browser yawe.'); return; }
+    if (!navigator.geolocation) {
+      setGpsError(language === 'fr' ? 'La géolocalisation n’est pas disponible.' : 'GPS ntabwo iboneka kuri browser yawe.');
+      return;
+    }
     setIsDetectingGps(true);
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        setDeliveryAddress((prev) => ({ ...prev, lat: coords.latitude, lng: coords.longitude, instructions: prev.instructions || 'Position GPS exacte transmise au vendeur.' }));
-        setIsDetectingGps(false); setGpsSuccess(true); window.setTimeout(() => setGpsSuccess(false), 3000);
+        setExactLocation(coords.latitude, coords.longitude);
+        setIsDetectingGps(false);
       },
       (error) => {
         setIsDetectingGps(false);
@@ -118,11 +136,15 @@ export const DeliveryAddressCard: React.FC<DeliveryAddressCardProps> = () => {
           ? (language === 'fr' ? 'Autorisez la localisation pour utiliser le GPS.' : 'Emera GPS location kugira dukoreshe aho uherereye.')
           : (language === 'fr' ? 'Impossible de récupérer votre position.' : 'Ntibyashobotse kubona aho uherereye.'));
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
   const inputValue = draft || currentValue;
+  const hasExactLocation = Number.isFinite(deliveryAddress.lat) && Number.isFinite(deliveryAddress.lng);
+  const mapCenter = hasExactLocation
+    ? { lat: Number(deliveryAddress.lat), lng: Number(deliveryAddress.lng) }
+    : DAKAR_CENTER;
 
   return (
     <section className="bg-white rounded-[32px] p-5 sm:p-6 border border-[#F0EDE8] shadow-artistic space-y-5">
@@ -183,7 +205,47 @@ export const DeliveryAddressCard: React.FC<DeliveryAddressCardProps> = () => {
       )}
 
       {current.key === 'street' && (
-        <button type="button" onClick={handleGpsDetect} disabled={isDetectingGps} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-emerald-50 text-[#006633] text-sm font-black border border-emerald-100 active:scale-[.99] transition-all"><Locate className={`w-4 h-4 ${isDetectingGps ? 'animate-spin' : ''}`} />{isDetectingGps ? (language === 'fr' ? 'Localisation…' : 'Ndimo kubona location…') : t('useCurrentGPS')}</button>
+        <div className="space-y-3">
+          <button type="button" onClick={handleGpsDetect} disabled={isDetectingGps} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-emerald-50 text-[#006633] text-sm font-black border border-emerald-100 active:scale-[.99] transition-all"><Locate className={`w-4 h-4 ${isDetectingGps ? 'animate-spin' : ''}`} />{isDetectingGps ? (language === 'fr' ? 'Localisation…' : 'Ndimo kubona location…') : (language === 'fr' ? 'Utiliser ma position GPS exacte' : 'Koresha GPS y’aho ndi ubu')}</button>
+
+          <div className="overflow-hidden rounded-[26px] border border-[#E9E5DE] bg-slate-900 h-64 sm:h-72">
+            <GoogleMapsWrapper fallbackHeight="h-64 sm:h-72">
+              <Map
+                center={mapCenter}
+                zoom={hasExactLocation ? 17 : 13}
+                gestureHandling="greedy"
+                disableDefaultUI={false}
+                mapId="DEMO_MAP_ID"
+                className="w-full h-full"
+                onClick={(event) => {
+                  const point = event.detail.latLng;
+                  if (point) setExactLocation(point.lat, point.lng);
+                }}
+              >
+                {hasExactLocation && (
+                  <AdvancedMarker
+                    position={mapCenter}
+                    draggable
+                    title={language === 'fr' ? 'Votre position de livraison' : 'Aho delivery izabera'}
+                    onDragEnd={(event) => {
+                      const point = event.latLng;
+                      if (point) setExactLocation(point.lat(), point.lng());
+                    }}
+                  >
+                    <div className="flex flex-col items-center pointer-events-none">
+                      <div className="w-11 h-11 rounded-full bg-red-600 text-white flex items-center justify-center shadow-2xl ring-4 ring-white/80 border-2 border-white">
+                        <MapPin className="w-5 h-5 fill-white" />
+                      </div>
+                      <span className="mt-1 px-2 py-0.5 rounded-full bg-black/80 text-white text-[10px] font-black whitespace-nowrap">Delivery</span>
+                    </div>
+                  </AdvancedMarker>
+                )}
+              </Map>
+            </GoogleMapsWrapper>
+          </div>
+
+          <p className="text-[10px] text-gray-400 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-[#006633]" />{language === 'fr' ? 'Touchez la carte ou déplacez le repère rouge pour choisir l’adresse exacte.' : 'Kanda kuri map cyangwa ukurure akamenyetso gatukura uhitemo aho delivery izagera neza.'}</p>
+        </div>
       )}
 
       {!current.required && current.key !== 'neighborhood' && (
