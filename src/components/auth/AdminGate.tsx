@@ -21,7 +21,7 @@ class AdminDashboardErrorBoundary extends Component<ErrorBoundaryProps, ErrorBou
   componentDidCatch(error: Error, info: ErrorInfo): void { console.error('Admin dashboard render error:', error, info); }
   render(): React.ReactNode {
     if (!this.state.hasError) return this.props.children;
-    return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white"><div className="w-full max-w-lg rounded-2xl border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl"><AlertTriangle className="mx-auto mb-4 h-10 w-10 text-red-400"/><h1 className="text-xl font-bold">Admin Dashboard could not be loaded</h1><p className="mt-2 text-sm text-slate-400">Please refresh the page and try again.</p><button onClick={() => window.location.reload()} className="mt-6 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950">Refresh Dashboard</button></div></div>;
+    return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white"><div className="w-full max-w-lg rounded-2xl border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl"><AlertTriangle className="mx-auto mb-4 h-10 w-10 text-red-400"/><h1 className="text-xl font-bold">Admin Dashboard could not be loaded</h1><p className="mt-2 text-sm text-slate-400">Please try again.</p><button onClick={() => window.location.reload()} className="mt-6 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950">Retry Dashboard</button></div></div>;
   }
 }
 
@@ -60,19 +60,22 @@ export const AdminGate: React.FC = () => {
   const [error, setError] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
 
-  const checkSession = async () => {
-    try {
-      const response = await fetch('/api/admin/session', { credentials: 'include', cache: 'no-store' });
-      const data = await response.json().catch(() => ({}));
-      setAuthenticated(Boolean(response.ok && data.ok));
-    } catch {
-      setAuthenticated(false);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { void checkSession(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    const checkSession = async () => {
+      try {
+        const response = await fetch('/api/admin/session', { credentials: 'include', cache: 'no-store' });
+        const data = await response.json().catch(() => ({}));
+        if (!cancelled) setAuthenticated(Boolean(response.ok && data.ok));
+      } catch {
+        if (!cancelled) setAuthenticated(false);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void checkSession();
+    return () => { cancelled = true; };
+  }, []);
 
   const login = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -92,15 +95,10 @@ export const AdminGate: React.FC = () => {
         setError('Email or password is incorrect');
         return;
       }
-      const sessionResponse = await fetch('/api/admin/session', { credentials: 'include', cache: 'no-store' });
-      const sessionData = await sessionResponse.json().catch(() => ({}));
-      if (!sessionResponse.ok || !sessionData.ok) {
-        setError('Unable to start admin session. Please try again.');
-        return;
-      }
       setPassword('');
       setError('');
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // The login response already sets the HttpOnly session cookie.
+      // Switch to the dashboard immediately; no refresh and no artificial delay.
       setAuthenticated(true);
     } catch {
       setError('Unable to connect to the admin server.');
