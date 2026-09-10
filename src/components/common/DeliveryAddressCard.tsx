@@ -10,8 +10,8 @@ type QuestionKey = 'name' | 'phone' | 'email' | 'street' | 'neighborhood' | 'bui
 
 const QUESTIONS: Array<{ key: QuestionKey; required?: boolean }> = [
   { key: 'name', required: true },
-  { key: 'phone', required: true },
   { key: 'street', required: true },
+  { key: 'phone', required: true },
   { key: 'neighborhood', required: true },
   { key: 'email' },
   { key: 'building' },
